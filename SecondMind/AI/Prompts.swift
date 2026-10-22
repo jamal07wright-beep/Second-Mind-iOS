@@ -48,9 +48,10 @@ enum Prompts {
     """
 
   static let debate = """
-    The other person just finished a point. Give the user a hint for a strong reply, under 15 \
-    words: the key point to make or the question to ask back. A hint, not a script. If no reply \
-    is needed, reply \(quiet).
+    The other person is still talking, so their last line may be cut off. Predict where their \
+    point is going and give the user a hint for a strong reply, ready the second they stop: \
+    under 15 words, the key point to make or the question to ask back. A hint, not a script. \
+    If no reply is needed, reply \(quiet).
     """
 
   static let factCheck = """

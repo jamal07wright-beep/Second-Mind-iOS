@@ -83,6 +83,10 @@ final class ListenViewModel {
   @ObservationIgnored private var linesAtLastConsistency = 0
   @ObservationIgnored private var busy: Set<String> = []
   @ObservationIgnored private var pendingHint: (text: String, at: TimeInterval)?
+  // Debate prediction: hints built while they're still talking.
+  @ObservationIgnored private var predictedWords = 0
+  @ObservationIgnored private var lastPredictAt: TimeInterval = -.infinity
+  @ObservationIgnored private var lastYourTurnAt: TimeInterval = -.infinity
 
   init(ai: AISettings) {
     self.ai = ai
@@ -319,8 +323,12 @@ final class ListenViewModel {
 
   private func recognized(_ text: String?, done: Bool) {
     guard isOn else { return }
-    if let text { partial = text }
+    if let text {
+      partial = text
+      predictReply()
+    }
     guard done else { return }
+    predictedWords = 0
     let line = partial
     partial = ""
     task = nil
@@ -404,6 +412,7 @@ final class ListenViewModel {
     guard !isCalibrating else { return }
     switch event {
     case .yourTurn:
+      lastYourTurnAt = now
       if turnBeeps { play(.yourTurn) }
       if let hint = pendingHint, now - hint.at < 25 {
         pendingHint = nil
@@ -456,22 +465,6 @@ final class ListenViewModel {
       }
     }
 
-    if ai.debate, who == .them, line.split(separator: " ").count >= 6 {
-      run("debate") {
-        let hint = try await self.ai.client.ask(
-          system: self.system(Prompts.debate),
-          user: "Conversation so far:\n\(self.conversation?.recent(16) ?? line)"
-        )
-        guard hint != Prompts.quiet else { return }
-        // Say it now if they've already stopped; otherwise on "your turn".
-        if self.detector.current == .nobody {
-          self.say(hint)
-        } else {
-          self.pendingHint = (hint, Date().timeIntervalSince(self.startedAt))
-        }
-      }
-    }
-
     if ai.factCheck, Self.hasClaim(line), now - lastFactCheckAt >= 20 {
       lastFactCheckAt = now
       run("fact") {
@@ -508,6 +501,36 @@ final class ListenViewModel {
 
     if ai.math, MathEngine.looksLikeMath(line) {
       run("math") { try await self.solve(line) }
+    }
+  }
+
+  /// Debate: builds the reply while they're still talking, from the words
+  /// heard so far, and refreshes it every few new words. When they stop,
+  /// the newest hint is already waiting.
+  private func predictReply() {
+    guard ai.debate, ai.hasKey, themFrames > meFrames else { return }
+    let now = Date().timeIntervalSince(startedAt)
+    let words = partial.split(separator: " ").count
+    let enoughNew = words - predictedWords >= 6
+    let stale = words > predictedWords && now - lastPredictAt >= 3
+    guard words >= 6, enoughNew || stale else { return }
+    predictedWords = words
+    lastPredictAt = now
+    let heard = partial
+    run("debate") {
+      let hint = try await self.ai.client.ask(
+        system: self.system(Prompts.debate),
+        user: "Conversation so far:\n\(self.conversation?.recent(12) ?? "")\nThem (still talking): \(heard)"
+      )
+      guard hint != Prompts.quiet else { return }
+      let ready = Date().timeIntervalSince(self.startedAt)
+      if self.detector.current == .nobody, ready - self.lastYourTurnAt < 4 {
+        // They already stopped and it's your turn: say it right away.
+        self.pendingHint = nil
+        self.say(hint)
+      } else {
+        self.pendingHint = (hint, ready)
+      }
     }
   }
 
