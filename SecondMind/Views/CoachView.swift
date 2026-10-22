@@ -20,7 +20,6 @@ struct CoachView: View {
             get: { coach.isOn },
             set: { on in
               if on {
-                listen.stop()
                 reading.stop()
                 Task { await coach.start() }
               } else {
@@ -68,10 +67,11 @@ struct CoachView: View {
           }
           .pickerStyle(.segmented)
           ModePicker(title: "Talking", mode: $coach.talkMode)
+          Toggle("Scan shapes, lines and text", isOn: $coach.scanScreen)
         } header: {
           Text("How it coaches")
         } footer: {
-          Text("Fast looks every 2.5 seconds. Smart only talks when it matters; Always gives a call every look.")
+          Text("Fast looks every 2.5 seconds. Smart only talks when it matters; Always gives a call every look. Talk to it any time and it answers using your screen. The scan runs free on your phone.")
         }
 
         if !coach.goals.isEmpty {

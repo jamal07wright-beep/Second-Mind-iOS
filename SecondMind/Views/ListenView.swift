@@ -29,6 +29,8 @@ struct ListenView: View {
         }
 
         Section {
+          ModePicker(title: "Talk with me", mode: $listen.talkWithMe)
+          Toggle("Turn on when glasses connect", isOn: $listen.autoStart)
           ModePicker(title: "Best Reply", mode: $ai.bestReplyMode)
           if ai.bestReplyMode != .off {
             Picker("Reply style", selection: $ai.replyStyle) {

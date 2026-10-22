@@ -70,6 +70,14 @@ enum Prompts {
     return text
   }
 
+  /// Talk with me: the user spoke to Second-Mind directly.
+  static let talkWithMe = """
+    The user is talking to YOU, like a friend in their ear. Answer what they just said, \
+    naturally and helpfully, in one or two short sentences, under 30 words. If it's a \
+    question, answer it straight. If it's just a thought out loud, react briefly or give a \
+    useful nudge. Never reply NONE unless it's clearly not meant for you.
+    """
+
   static let stuck = """
     It's their turn and they've gone quiet. Give ONE short thing they could say next, under 15 \
     words, in their own natural voice. No quotes, no intro.

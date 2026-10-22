@@ -36,6 +36,13 @@ final class CoachViewModel {
   var pace: CoachPace { didSet { UserDefaults.standard.set(pace.rawValue, forKey: "coach.pace") } }
   var talkMode: FeatureMode { didSet { UserDefaults.standard.set(talkMode.rawValue, forKey: "coach.talk") } }
   var speechRate: Float = 0.52
+  /// Scan words, numbers, lines and shapes on the phone before each look.
+  var scanScreen: Bool { didSet { UserDefaults.standard.set(scanScreen, forKey: "coach.scan") } }
+  private(set) var lastScan: String?
+  /// Listen's mic, so Coach hears you mid-game.
+  @ObservationIgnored weak var ears: ListenViewModel?
+  @ObservationIgnored private var scan = ScreenScan()
+  @ObservationIgnored private var heardLines: [String] = []
 
   // MARK: - Private
 
@@ -62,6 +69,7 @@ final class CoachViewModel {
     game = CoachGame(rawValue: d.string(forKey: "coach.game") ?? "") ?? .fifa
     pace = CoachPace(rawValue: d.string(forKey: "coach.pace") ?? "") ?? .fast
     talkMode = FeatureMode(rawValue: d.string(forKey: "coach.talk") ?? "") ?? .smart
+    scanScreen = d.object(forKey: "coach.scan") == nil ? true : d.bool(forKey: "coach.scan")
   }
 
   // MARK: - On / off
@@ -97,6 +105,11 @@ final class CoachViewModel {
         Task { @MainActor [weak self] in self?.sessionChanged(state) }
       }.store(in: sessionTokens)
       try session.start()
+      // Hear the user the whole time: their words come straight to Coach.
+      if let ears {
+        ears.coachEars = { [weak self] line in self?.heard(line) }
+        if !ears.isOn { await ears.start() }
+      }
     } catch {
       stop()
       problem = error.localizedDescription
@@ -110,6 +123,11 @@ final class CoachViewModel {
     loop?.cancel()
     loop = nil
     voice.stop()
+    if ears?.coachEars != nil {
+      ears?.coachEars = nil
+      ears?.stop()
+    }
+    heardLines = []
     streamTokens.clear()
     camera?.stop()
     camera = nil
@@ -180,10 +198,15 @@ final class CoachViewModel {
     looking = true
     defer { looking = false }
     guard let jpeg = Self.jpeg(frame) else { return }
+    await rescan(frame)
+    let heard = heardLines.suffix(3).joined(separator: " | ")
+    let spotted = heardLines.suffix(3).flatMap { scan.find($0) }.prefix(5).map { "\($0.zone): \($0.text)" }
+    heardLines.removeAll()
     do {
       let reply = try await ai.client.ask(
         system: CoachPrompts.system(game: game, mode: talkMode, aboutMe: ai.aboutMe),
-        user: CoachPrompts.look(notes: notes, recentCalls: Array(calls.suffix(3))),
+        user: CoachPrompts.look(notes: notes, recentCalls: Array(calls.suffix(3)))
+          + CoachPrompts.extra(scan: scan.summary, heard: heard, spotted: spotted.joined(separator: "; ")),
         maxTokens: 2_000,
         effort: "low",
         schema: CoachReply.schema,
@@ -216,7 +239,46 @@ final class CoachViewModel {
     say(line)
   }
 
-  private func say(_ line: String) {
+  /// The on-device scan of the newest frame.
+  private func rescan(_ frame: UIImage) async {
+    guard scanScreen, let image = frame.cgImage else { return }
+    scan = await Task.detached(priority: .userInitiated) { ScreenScanner.scan(image) }.value
+    lastScan = scan.summary.isEmpty ? nil : scan.summary
+  }
+
+  /// Something heard while coaching. Your words get an answer now, using
+  /// what's on screen; anything else is kept for the next look.
+  func heard(_ line: String) {
+    heardLines.append(line)
+    if heardLines.count > 6 { heardLines.removeFirst() }
+    guard isOn, let frame = latestFrame, let jpeg = Self.jpeg(frame) else { return }
+    Task { @MainActor in
+      await self.rescan(frame)
+      do {
+        let answer = try await self.ai.client.ask(
+          system: CoachPrompts.system(game: self.game, mode: .always, aboutMe: self.ai.aboutMe),
+          user: CoachPrompts.answer(line, notes: self.notes, scan: self.scan.summary),
+          maxTokens: 1_000,
+          effort: "low",
+          images: [jpeg]
+        )
+        guard answer != Prompts.quiet else { return }
+        self.calls.append(answer)
+        self.lastCall = answer
+        self.say(answer, mustSay: true)
+      } catch {
+        self.problem = error.localizedDescription
+      }
+    }
+  }
+
+  private func say(_ line: String, mustSay: Bool = false) {
+    // Through Listen's mic engine: echo cancelled, so you can talk over it.
+    // Calls wait while anyone is talking; answers to you always play.
+    if let ears, ears.isOn {
+      if mustSay || !ears.isBusyTalking { ears.say(line) }
+      return
+    }
     // Newest call wins: skip if still talking, so calls never lag behind the game.
     guard !speaking else { return }
     speaking = true

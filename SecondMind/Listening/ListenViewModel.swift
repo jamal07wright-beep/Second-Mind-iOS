@@ -81,7 +81,26 @@ final class ListenViewModel {
   var longTalkNudge: Bool { didSet { save(longTalkNudge, "listen.longTalk") } }
   var helpWhenStuck: Bool { didSet { save(helpWhenStuck, "listen.claude") } }
   /// Pause the mic for a moment while talking, so the voice plays in full quality.
-  var clearVoice: Bool { didSet { save(clearVoice, "listen.clearVoice") } }
+  var clearVoice: Bool { didSet { save(clearVoice, "listen.clearVoice2") } }
+  /// Turn on by itself whenever Bluetooth glasses or a headset connect.
+  var autoStart: Bool { didSet { save(autoStart, "listen.autoStart") } }
+  /// Talk with me: answers you every time you speak, like a friend in your ear.
+  var talkWithMe: FeatureMode { didSet { UserDefaults.standard.set(talkWithMe.rawValue, forKey: "listen.talkWithMe") } }
+  /// Coach mode is using the mic: only your own words matter, and they go to Coach.
+  @ObservationIgnored var coachEars: ((String) -> Void)?
+  /// True while anyone is mid-sentence or Second-Mind is talking, so Coach waits.
+  var isBusyTalking: Bool { !partial.isEmpty || isSaying }
+  /// Voice played through the mic's engine, so echo cancellation removes it.
+  @ObservationIgnored private let voicePlayer = AVAudioPlayerNode()
+  @ObservationIgnored private var voiceAttached = false
+  /// Chimes still playing (AVAudioPlayerNode stays "playing" after it finishes,
+  /// so we count them ourselves).
+  @ObservationIgnored private var chimesPlaying = 0
+  /// What we said lately, so our own voice is never mistaken for someone.
+  @ObservationIgnored private var recentlySaid: [String] = []
+  @ObservationIgnored private var watchdog: Task<Void, Never>?
+  @ObservationIgnored private var observers: [NSObjectProtocol] = []
+  @ObservationIgnored private var restarting = false
   var speechRate: Float = 0.5
 
   let navigator = Navigator()
@@ -147,13 +166,18 @@ final class ListenViewModel {
     moodChimes = flag("listen.mood", true)
     longTalkNudge = flag("listen.longTalk", false)
     helpWhenStuck = flag("listen.claude", true)
-    clearVoice = flag("listen.clearVoice", true)
+    // Off by default now: the mic stays on and echo cancellation keeps it from
+    // hearing itself, so you can talk any time.
+    clearVoice = flag("listen.clearVoice2", false)
+    autoStart = flag("listen.autoStart", true)
+    talkWithMe = FeatureMode(rawValue: d.string(forKey: "listen.talkWithMe") ?? "") ?? .always
     if d.object(forKey: "listen.myLevel") != nil {
       detector.myLevel = d.float(forKey: "listen.myLevel")
     }
     navigator.say = { [weak self] text in self?.say(text) }
     feed.boost = boostQuiet
     if let saved = VoiceProfile.load() { useProfile(saved) }
+    watchAudio()
   }
 
   var isCalibrated: Bool {
@@ -161,6 +185,103 @@ final class ListenViewModel {
   }
 
   /// Uses a voice profile from now on (from setup, or restored from Obsidian).
+  // MARK: - Staying on
+
+  /// Restarts the mic after calls, Siri, and Bluetooth hiccups, and turns
+  /// Listen on by itself when glasses or a headset connect.
+  private func watchAudio() {
+    let center = NotificationCenter.default
+    observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+      let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init)
+      guard type == .ended else { return }
+      Task { @MainActor [weak self] in self?.restartMic(after: .milliseconds(600)) }
+    })
+    observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+      let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt).flatMap(AVAudioSession.RouteChangeReason.init)
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        if reason == .newDeviceAvailable, !self.isOn, self.autoStart, self.coachEars == nil, Self.headsetConnected() {
+          await self.start()
+        } else if reason == .newDeviceAvailable || reason == .oldDeviceUnavailable {
+          self.restartMic(after: .milliseconds(800))
+        }
+      }
+    })
+    observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+      Task { @MainActor [weak self] in self?.restartMic(after: .seconds(1)) }
+    })
+    observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        guard let self, !self.isOn, self.autoStart, self.coachEars == nil, Self.headsetConnected() else { return }
+        await self.start()
+      }
+    })
+  }
+
+  static func headsetConnected() -> Bool {
+    let session = AVAudioSession.sharedInstance()
+    let ports: [AVAudioSession.Port] = [.bluetoothHFP, .bluetoothA2DP, .bluetoothLE]
+    return session.currentRoute.outputs.contains { ports.contains($0.portType) }
+      || (session.availableInputs ?? []).contains { $0.portType == .bluetoothHFP }
+  }
+
+  /// Every 2 seconds: if the mic or speech recognizer stopped, bring it back.
+  private func startWatchdog() {
+    watchdog?.cancel()
+    watchdog = Task { @MainActor [weak self] in
+      var stalled = 0
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(2))
+        guard let self, self.isOn else { return }
+        guard !self.micPaused, !self.restarting else { stalled = 0; continue }
+        if !self.engine.isRunning {
+          self.restartMic(after: .zero)
+        } else if self.task == nil {
+          stalled += 1
+          if stalled >= 1 { self.startRecognition() }
+        } else {
+          stalled = 0
+        }
+      }
+    }
+  }
+
+  private func restartMic(after delay: Duration) {
+    guard isOn, !micPaused, !restarting else { return }
+    restarting = true
+    Task { @MainActor in
+      defer { self.restarting = false }
+      try? await Task.sleep(for: delay)
+      guard self.isOn, !self.micPaused else { return }
+      self.task?.cancel()
+      self.task = nil
+      self.engine.inputNode.removeTap(onBus: 0)
+      self.engine.stop()
+      do {
+        try self.configureAudio()
+        try self.startEngine()
+        self.startRecognition()
+      } catch {
+        self.report("Mic is coming back… (\(error.localizedDescription))")
+      }
+    }
+  }
+
+  /// Our own words heard back (echo that slipped through): never treat them as someone.
+  private func remember(said line: String) {
+    recentlySaid.append(line.lowercased())
+    if recentlySaid.count > 6 { recentlySaid.removeFirst() }
+  }
+
+  private func isEcho(_ line: String) -> Bool {
+    let heard = Set(line.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+    guard heard.count >= 3 else { return false }
+    return recentlySaid.contains { said in
+      let mine = Set(said.split(whereSeparator: { !$0.isLetter }).map(String.init))
+      return Double(heard.intersection(mine).count) / Double(heard.count) >= 0.7
+    }
+  }
+
   func useProfile(_ profile: VoiceProfile) {
     voiceProfile = profile
     detector.profile = profile
@@ -212,11 +333,14 @@ final class ListenViewModel {
       ? "On. Listening through your glasses. You can lock your phone."
       : "On, but using the phone mic. Connect your glasses in Bluetooth."
     startRecognition()
+    startWatchdog()
   }
 
   func stop() {
     guard isOn else { return }
     isOn = false
+    watchdog?.cancel()
+    watchdog = nil
     isCalibrating = false
     toSay = []
     voice.stop()
@@ -281,6 +405,17 @@ final class ListenViewModel {
     defer { isSaying = false }
     while !toSay.isEmpty {
       let line = toSay.removeFirst()
+      remember(said: line)
+      // Always listening: play through the mic's engine. Echo cancellation keeps
+      // it from hearing itself, and the mic never stops, so you can talk any time.
+      if isOn, !clearVoice, engine.isRunning, let audio = await voice.buffer(for: line, rate: speechRate) {
+        if let voiceProblem = voice.lastError { report(voiceProblem) }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+          voicePlayer.scheduleBuffer(audio) { done.resume() }
+          if !voicePlayer.isPlaying { voicePlayer.play() }
+        }
+        continue
+      }
       // Get the voice ready first (download it) while the mic keeps listening.
       let ready = await voice.prepare(line)
       feed.muted = true
@@ -355,12 +490,25 @@ final class ListenViewModel {
   }
 
   private func startEngine() throws {
+    let input = engine.inputNode
+    // Echo cancellation (like FaceTime): Second-Mind's own voice and chimes,
+    // played through this engine, are removed from what the mic hears.
+    if !clearVoice {
+      try? input.setVoiceProcessingEnabled(true)
+      input.isVoiceProcessingAGCEnabled = true  // lifts quiet voices
+    } else {
+      try? input.setVoiceProcessingEnabled(false)
+    }
     if !playerAttached {
       engine.attach(player)
       engine.connect(player, to: engine.mainMixerNode, format: chimeFormat)
       playerAttached = true
     }
-    let input = engine.inputNode
+    if !voiceAttached {
+      engine.attach(voicePlayer)
+      engine.connect(voicePlayer, to: engine.mainMixerNode, format: HumanVoice.bufferFormat)
+      voiceAttached = true
+    }
     let format = input.outputFormat(forBus: 0)
     let feed = self.feed
     let rate = format.sampleRate
@@ -383,6 +531,8 @@ final class ListenViewModel {
   private func teardownAudio() {
     engine.inputNode.removeTap(onBus: 0)
     player.stop()
+    voicePlayer.stop()
+    chimesPlaying = 0
     engine.stop()
     feed.set(nil)
     gate = nil
@@ -467,6 +617,13 @@ final class ListenViewModel {
     let who: Talker = meFrames > max(themFrames, 2) ? .me : .them
     meFrames = 0
     themFrames = 0
+    // Our own voice heard back: not a person.
+    if isEcho(clean) { return }
+    // Coach mode: the game is noise. Your words (or a clear question) go to Coach.
+    if let coachEars {
+      if who == .me || Self.wantsAnswer(clean) { coachEars(clean) }
+      return
+    }
     conversation?.lines.append(ConversationLine(time: Date(), speaker: who, text: clean))
     autosave()
     readTheRoom()
@@ -480,6 +637,35 @@ final class ListenViewModel {
       if linesLearned % 10 == 0 { voiceProfile?.save() }
     }
     react(to: clean, from: who)
+    talkBack(to: clean, from: who)
+  }
+
+  /// Talk with me: you speak, it answers. If it can't tell it was you and
+  /// Best Reply is off, it answers anyway so you're never ignored.
+  private func talkBack(to line: String, from who: Talker) {
+    guard talkWithMe != .off, ai.hasKey else { return }
+    let mine = who == .me || !ai.debate
+    guard mine else { return }
+    if talkWithMe == .smart, !Self.wantsAnswer(line) { return }
+    hintWanted = false
+    pendingHint = nil
+    run("talk") {
+      let reply = try await self.ai.client.ask(
+        system: self.system(Prompts.talkWithMe),
+        user: "Conversation so far:\n\(self.conversation?.recent(10) ?? "")\nThe user just said to you: \(line)"
+      )
+      guard reply != Prompts.quiet else { return }
+      self.say(reply)
+    }
+  }
+
+  /// A question or a request, worth answering in Smart mode.
+  static func wantsAnswer(_ text: String) -> Bool {
+    let lower = text.lowercased()
+    if lower.contains("?") { return true }
+    let starts = ["what", "why", "how", "who", "where", "when", "which", "should", "can", "could", "would", "is ", "are ", "do ", "does ", "did ", "tell me", "help", "give me", "explain", "remind", "find", "check"]
+    let cues = ["second mind", "coach", "hey", "any tips", "what do i", "what should"]
+    return starts.contains { lower.hasPrefix($0) } || cues.contains { lower.contains($0) }
   }
 
   /// Best Reply: after every line from them, say the hint. Uses the one
@@ -514,11 +700,14 @@ final class ListenViewModel {
     let now = Date().timeIntervalSince(startedAt)
 
     // Don't treat our own voice or chimes as people talking.
-    if voice.isSpeaking || player.isPlaying {
+    // Only the old pause-the-mic voice needs muting; echo cancellation handles the rest.
+    if clearVoice, voice.isSpeaking {
       feed.muted = true
       return
     }
-    if !isSaying { feed.muted = false }
+    if !(clearVoice && isSaying) { feed.muted = false }
+    // Chime tones go to the glasses speakers; skip level reading while one plays.
+    if chimesPlaying > 0 { return }
 
     if isCalibrating, level > detector.noiseFloor + 10 {
       calibrationLevels.append(level)
@@ -576,6 +765,8 @@ final class ListenViewModel {
   }
 
   private func handle(_ event: TurnEvent, at now: TimeInterval) {
+    // Coach mode: no social beeps during a game.
+    guard coachEars == nil else { return }
     guard !isCalibrating else { return }
     switch event {
     case .yourTurn:
@@ -609,7 +800,10 @@ final class ListenViewModel {
 
   private func play(_ chime: Chime) {
     guard !micPaused, engine.isRunning, let buffer = chime.buffer(format: chimeFormat) else { return }
-    player.scheduleBuffer(buffer, completionHandler: nil)
+    chimesPlaying += 1
+    player.scheduleBuffer(buffer) { [weak self] in
+      Task { @MainActor [weak self] in self?.chimesPlaying = max(0, (self?.chimesPlaying ?? 1) - 1) }
+    }
     if !player.isPlaying { player.play() }
   }
 
@@ -685,7 +879,7 @@ final class ListenViewModel {
   /// the newest hint is already waiting.
   private func predictReply() {
     // Skip only when it's clearly your own voice.
-    guard ai.debate, ai.hasKey, meFrames <= max(themFrames, 2) else { return }
+    guard ai.debate, ai.hasKey, coachEars == nil, meFrames <= max(themFrames, 2) else { return }
     let now = Date().timeIntervalSince(startedAt)
     let words = partial.split(separator: " ").count
     // Start early and refresh often, so the hint is ready the instant they stop.
@@ -724,7 +918,7 @@ final class ListenViewModel {
 
   /// Predict their words: guesses how their sentence ends while they talk.
   private func predictTheirWords() {
-    guard ai.predictWords, ai.hasKey, meFrames <= max(themFrames, 2) else { return }
+    guard ai.predictWords, ai.hasKey, coachEars == nil, meFrames <= max(themFrames, 2) else { return }
     let words = partial.split(separator: " ").count
     guard words >= 3, words - predictedTheirWords >= 3 else { return }
     predictedTheirWords = words

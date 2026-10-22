@@ -28,6 +28,7 @@ final class AppState {
     listen = ListenViewModel(ai: ai)
     graph = GraphModel(ai: ai)
     coach = CoachViewModel(wearables: wearables, ai: ai)
+    coach.ears = listen
     let graph = self.graph
     listen.memory = { text in graph.peopleNotes(for: text) }
     listen.saveVoiceNote = { profile in graph.saveVoiceNote(profile) }

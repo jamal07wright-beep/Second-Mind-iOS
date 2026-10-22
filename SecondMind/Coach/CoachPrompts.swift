@@ -104,9 +104,12 @@ enum CoachPrompts {
         """
     case .work:
       return """
-        Mode: work. Look at what's on their screen and help them work faster and better: catch \
-        mistakes, typos, or bugs, suggest the next step, or point out something they missed. \
-        If they look stuck, give the one tip that unblocks them. Calls can be up to 20 words.
+        Mode: work and school. Look at what's on their screen and help them work faster and \
+        better: catch mistakes, typos, wrong formulas, or bugs, suggest the next step, or point \
+        out something they missed. In spreadsheets, use the scan's cell text and grid to name \
+        the exact cell, row, or column ("B7 should be a SUM, not typed in"). For homework, \
+        guide them to the answer so they learn it. If they look stuck, give the one tip that \
+        unblocks them. Calls can be up to 20 words.
         """
     case .anyGame:
       return """
@@ -124,6 +127,28 @@ enum CoachPrompts {
       Your last calls: \(calls)
       Reply in JSON.
       """
+  }
+
+  /// The on-device scan and what was just said, added to a look.
+  static func extra(scan: String, heard: String, spotted: String) -> String {
+    var text = ""
+    if !scan.isEmpty {
+      text += "\n\n\(scan)\nUse the scan for exact text, numbers, and where things are; trust the photo for everything else."
+    }
+    if !heard.isEmpty { text += "\n\nJust said out loud: \(heard)" }
+    if !spotted.isEmpty { text += "\nMentioned and on screen right now: \(spotted). Point it out if useful." }
+    return text
+  }
+
+  /// The user asked Coach something mid-game.
+  static func answer(_ line: String, notes: String, scan: String) -> String {
+    """
+    The user just said to you: \(line)
+    Answer them now using the photo of their screen and your notes. Plain, under 25 words, \
+    no dashes. Reply with only the words to say, not JSON.
+    Your notes: \(notes.isEmpty ? "none yet" : notes)
+    \(scan)
+    """
   }
 
   static func report(game: CoachGame) -> String {

@@ -84,9 +84,12 @@ struct ElevenLabsClient {
   /// A warm, natural premade voice. Can be changed in Settings.
   static let defaultVoiceID = "21m00Tcm4TlvDq8ikWAM"
 
-  func makeRequest(text: String) throws -> URLRequest {
+  /// Raw 16-bit, 24 kHz mono: plays straight through the mic's audio engine.
+  static let pcmFormat = "pcm_24000"
+
+  func makeRequest(text: String, format: String = "mp3_44100_128") throws -> URLRequest {
     var components = URLComponents(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceID)")!
-    components.queryItems = [URLQueryItem(name: "output_format", value: "mp3_44100_128")]
+    components.queryItems = [URLQueryItem(name: "output_format", value: format)]
     var request = URLRequest(url: components.url!)
     request.httpMethod = "POST"
     request.timeoutInterval = 20
@@ -101,8 +104,8 @@ struct ElevenLabsClient {
     return request
   }
 
-  func audio(for text: String) async throws -> Data {
-    let (data, response) = try await session.data(for: makeRequest(text: text))
+  func audio(for text: String, format: String = "mp3_44100_128") async throws -> Data {
+    let (data, response) = try await session.data(for: makeRequest(text: text, format: format))
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
     guard status == 200 else {
       throw NSError(
@@ -134,6 +137,85 @@ final class HumanVoice: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
   private(set) var isSpeaking = false
   /// Why the ElevenLabs voice didn't play last time, if it didn't.
   private(set) var lastError: String?
+
+  // MARK: - Voice as audio buffers (for always-listening mode)
+
+  /// Every line is made into this format, then played through the mic's
+  /// engine so echo cancellation keeps Second-Mind from hearing itself.
+  static let bufferFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
+
+  private let writer = AVSpeechSynthesizer()
+
+  /// The line as audio: ElevenLabs if it works, otherwise the best iPhone voice.
+  func buffer(for text: String, rate: Float = 0.5) async -> AVAudioPCMBuffer? {
+    lastError = nil
+    if let key = settings.elevenLabsKey {
+      do {
+        let data = try await ElevenLabsClient(apiKey: key, voiceID: settings.elevenLabsVoiceID)
+          .audio(for: text, format: ElevenLabsClient.pcmFormat)
+        if let pcm = Self.pcm16(data) { return pcm }
+      } catch {
+        lastError = "ElevenLabs voice didn't work (\(error.localizedDescription)). Used the iPhone voice."
+      }
+    }
+    return await phoneVoice(text, rate: rate)
+  }
+
+  /// 16-bit little-endian samples into a float buffer.
+  static func pcm16(_ data: Data) -> AVAudioPCMBuffer? {
+    let count = data.count / 2
+    guard count > 0, let buffer = AVAudioPCMBuffer(pcmFormat: bufferFormat, frameCapacity: AVAudioFrameCount(count)),
+      let out = buffer.floatChannelData?[0]
+    else { return nil }
+    buffer.frameLength = AVAudioFrameCount(count)
+    data.withUnsafeBytes { raw in
+      let samples = raw.bindMemory(to: Int16.self)
+      for i in 0..<count { out[i] = Float(Int16(littleEndian: samples[i])) / 32_768 }
+    }
+    return buffer
+  }
+
+  private func phoneVoice(_ text: String, rate: Float) async -> AVAudioPCMBuffer? {
+    let utterance = AVSpeechUtterance(string: text)
+    utterance.rate = rate
+    if let pick = VoicePicker.choose(VoicePicker.installed(), preferred: settings.appleVoiceID) {
+      utterance.voice = AVSpeechSynthesisVoice(identifier: pick.id)
+    }
+    let parts: [AVAudioPCMBuffer] = await withCheckedContinuation { continuation in
+      var collected: [AVAudioPCMBuffer] = []
+      var done = false
+      writer.write(utterance) { buffer in
+        guard !done else { return }
+        if let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 {
+          collected.append(pcm)
+        } else {
+          done = true
+          continuation.resume(returning: collected)
+        }
+      }
+    }
+    return Self.convert(parts, to: Self.bufferFormat)
+  }
+
+  /// Joins buffers and converts them to one format.
+  static func convert(_ parts: [AVAudioPCMBuffer], to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+    guard let first = parts.first, let converter = AVAudioConverter(from: first.format, to: format) else { return nil }
+    let totalIn = parts.reduce(0) { $0 + Int($1.frameLength) }
+    let capacity = AVAudioFrameCount(Double(totalIn) * format.sampleRate / first.format.sampleRate + 1_024)
+    guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+    var index = 0
+    var error: NSError?
+    _ = converter.convert(to: output, error: &error) { _, status in
+      guard index < parts.count else {
+        status.pointee = .endOfStream
+        return nil
+      }
+      status.pointee = .haveData
+      defer { index += 1 }
+      return parts[index]
+    }
+    return error == nil && output.frameLength > 0 ? output : nil
+  }
 
   /// Audio ready to play: the human voice if it downloaded, otherwise the text
   /// for the iPhone voice.
