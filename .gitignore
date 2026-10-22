@@ -6,3 +6,4 @@ Payload/
 *.xcresult
 *.log
 .DS_Store
+ipa/
