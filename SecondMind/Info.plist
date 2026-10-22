@@ -56,7 +56,19 @@
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 		<string>external-accessory</string>
+		<string>audio</string>
+		<string>location</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Listens through your glasses mic so Second-Mind can help in conversations. Audio stays on your phone.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Turns what's said into text on your phone, so Second-Mind can follow the conversation.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Used for walking directions when you say yes to a trip.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UISupportedExternalAccessoryProtocols</key>
 	<array>
 		<string>com.meta.ar.wearable</string>

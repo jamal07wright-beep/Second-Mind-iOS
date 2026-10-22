@@ -64,6 +64,13 @@ jobs:
             -only-testing:SecondMindTests/StillnessDetectorTests \
             -only-testing:SecondMindTests/TextToolsTests \
             -only-testing:SecondMindTests/TextRecognizerTests \
+            -only-testing:SecondMindTests/TurnDetectorTests \
+            -only-testing:SecondMindTests/MoodDetectorTests \
+            -only-testing:SecondMindTests/ChimeTests \
+            -only-testing:SecondMindTests/MathEngineTests \
+            -only-testing:SecondMindTests/DayGraphTests \
+            -only-testing:SecondMindTests/RequestTests \
+            -only-testing:SecondMindTests/VoiceAndStoreTests \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 120 \
             | tee logic.log | grep --line-buffered -E "(Test Case|error:|\*\* TEST)"

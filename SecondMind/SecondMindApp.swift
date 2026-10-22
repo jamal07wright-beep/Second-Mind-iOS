@@ -2,7 +2,7 @@
 // SecondMindApp.swift
 //
 // Entry point. Sets up Meta's glasses SDK once, checks that the phone's
-// secure storage works after Sideloadly signing, and forwards Meta AI
+// secure storage works after sideload signing, and forwards Meta AI
 // callback links to the SDK.
 //
 // Based on Meta's CameraAccess sample (Wearables Device Access Toolkit).
@@ -13,10 +13,9 @@ import SwiftUI
 
 @main
 struct SecondMindApp: App {
-  @State private var connection: GlassesConnection
-  @State private var reading: ReadingViewModel
-  @State private var practice = PracticeGlasses()
+  @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   private let keychainWorks: Bool
+  private let state: AppState
 
   init() {
     do {
@@ -25,35 +24,28 @@ struct SecondMindApp: App {
       NSLog("[SecondMind] Failed to configure Wearables SDK: \(error)")
     }
     keychainWorks = KeychainCheck.run()
-    let wearables = Wearables.shared
-    _connection = State(wrappedValue: GlassesConnection(wearables: wearables))
-    _reading = State(wrappedValue: ReadingViewModel(wearables: wearables, speaker: SystemSpeaker()))
+    state = AppState.shared
   }
 
   var body: some Scene {
     WindowGroup {
-      ContentView(
-        connection: connection,
-        reading: reading,
-        practice: practice,
-        keychainWorks: keychainWorks
-      )
-      .onOpenURL { url in
-        // Only Meta AI callback links go to the SDK.
-        guard
-          let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-          components.queryItems?.contains(where: { $0.name == "metaWearablesAction" }) == true
-        else {
-          return
-        }
-        Task {
-          do {
-            _ = try await Wearables.shared.handleUrl(url)
-          } catch {
-            connection.showError(error.localizedDescription)
+      RootView(state: state, keychainWorks: keychainWorks)
+        .onOpenURL { url in
+          // Only Meta AI callback links go to the SDK.
+          guard
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+            components.queryItems?.contains(where: { $0.name == "metaWearablesAction" }) == true
+          else {
+            return
+          }
+          Task {
+            do {
+              _ = try await Wearables.shared.handleUrl(url)
+            } catch {
+              state.connection.showError(error.localizedDescription)
+            }
           }
         }
-      }
     }
   }
 }
