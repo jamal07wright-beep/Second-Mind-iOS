@@ -63,6 +63,39 @@ enum Prompts {
       """
   }
 
+  /// Read the room: a running read of the conversation, in JSON.
+  static func situation(influence: Bool, outcomes: Bool) -> String {
+    """
+    Read this conversation the way a sharp, socially skilled friend would, fast. Think about \
+    how conversations really work: turn taking, subtext, what people say versus what they \
+    mean, status and who's leading, rapport, and where things are heading.
+
+    - user_aim: what the user is really going for, even if they never said it. Infer it from \
+    their words, tone, their goal, how they talk, and what you remember. Short phrase.
+    - their_aim: what the other person wants or is after. Short phrase.
+    - mood: the vibe right now, a few words.
+    - upper_hand: who's leading and why, a few words.
+    - next_likely: what they'll most likely say or do next.
+    - turning_point: true only at a real decision or turning point (an ask, an offer, a \
+    yes or no coming, a fight escalating or cooling, a plan being set). Usually false.
+    - outcomes: only when turning_point is true, one to three likely outcomes, each with a \
+    rough chance and what tips it, like "60% they say yes if you offer Friday". Otherwise an \
+    empty list.
+    - lever: \(influence ? "one honest move that would steer them toward the user's aim (framing, timing, a reason that fits their own interest, rapport, choosing what to offer first). Never lies, pressure past a no, or using someone's weak spots." : "empty string.")
+    \(outcomes ? "" : "Keep outcomes empty unless asked.")
+    """
+  }
+
+  /// Influence guide added to Best Reply when the Influence switch is on.
+  static let influence = """
+    Influence is on: shape the hint so it moves them toward what the user wants. Use honest \
+    persuasion that works on real people: frame it around what they want, pick the right \
+    moment, build rapport, give a reason, anchor high in a negotiation, offer choices where \
+    both options work for the user, mirror their words, and let silence do work. Predict \
+    their likely reaction and get ahead of it. Never lies, threats, guilt trips, pressure past \
+    a no, or exploiting someone's weak spots; those backfire and the user doesn't want them.
+    """
+
   /// Guess how their sentence ends, while they're still saying it.
   static let predictWords = """
     The other person is mid-sentence. Guess how they will finish it, using the conversation \

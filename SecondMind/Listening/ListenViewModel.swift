@@ -64,6 +64,19 @@ final class ListenViewModel {
     }
   }
   @ObservationIgnored private var linesLearned = 0
+
+  /// Only treat real speech as conversation, not music, singing, or noise.
+  var ignoreNoise: Bool { didSet { save(ignoreNoise, "listen.ignoreNoise") } }
+  /// What the sound classifier hears when it isn't speech, for the screen.
+  private(set) var soundNote: String?
+  /// Read the room: Claude's running read of the conversation.
+  private(set) var situation: SituationRead?
+  @ObservationIgnored private var gate: SoundGate?
+  @ObservationIgnored private var speechFrames = 0
+  @ObservationIgnored private var musicFrames = 0
+  @ObservationIgnored private var linesAtLastRead = 0
+  @ObservationIgnored private var lastReadAt: TimeInterval = -.infinity
+  @ObservationIgnored private var lastOutcomeAt: TimeInterval = -.infinity
   var moodChimes: Bool { didSet { save(moodChimes, "listen.mood") } }
   var longTalkNudge: Bool { didSet { save(longTalkNudge, "listen.longTalk") } }
   var helpWhenStuck: Bool { didSet { save(helpWhenStuck, "listen.claude") } }
@@ -127,6 +140,7 @@ final class ListenViewModel {
     let d = UserDefaults.standard
     func flag(_ key: String, _ fallback: Bool) -> Bool { d.object(forKey: key) == nil ? fallback : d.bool(forKey: key) }
     boostQuiet = flag("listen.boost", true)
+    ignoreNoise = flag("listen.ignoreNoise", true)
     turnBeeps = flag("listen.turnBeeps", true)
     holdOnBeep = flag("listen.holdOn", true)
     awkwardBeep = flag("listen.awkward", true)
@@ -189,6 +203,10 @@ final class ListenViewModel {
     detector = fresh
     mood = MoodDetector()
     pendingHint = nil
+    situation = nil
+    linesAtLastRead = 0
+    lastReadAt = -.infinity
+    lastOutcomeAt = -.infinity
     UIApplication.shared.isIdleTimerDisabled = true
     status = usingGlassesMic
       ? "On. Listening through your glasses. You can lock your phone."
@@ -346,7 +364,10 @@ final class ListenViewModel {
     let format = input.outputFormat(forBus: 0)
     let feed = self.feed
     let rate = format.sampleRate
+    let gate = SoundGate(format: format)
+    self.gate = gate
     input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
+      gate?.analyze(buffer)
       let level = AudioFeed.level(of: buffer)
       var pitch: Float?
       if level > -60, let data = buffer.floatChannelData, buffer.frameLength > 0 {
@@ -364,6 +385,7 @@ final class ListenViewModel {
     player.stop()
     engine.stop()
     feed.set(nil)
+    gate = nil
     micPaused = false
     try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
   }
@@ -398,8 +420,12 @@ final class ListenViewModel {
       let now = Date().timeIntervalSince(startedAt)
       lastWordsAt = now
       if utteranceStartedAt == nil { utteranceStartedAt = now }
-      predictReply()
-      predictTheirWords()
+      // Lyrics and TV aren't the conversation: don't build replies to them.
+      let musicOn = ignoreNoise && (gate?.scores.isMusic ?? false)
+      if !musicOn {
+        predictReply()
+        predictTheirWords()
+      }
     }
     guard done else { return }
     predictedWords = 0
@@ -424,7 +450,18 @@ final class ListenViewModel {
 
   private func commit(_ text: String) {
     let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let mostlyMusic = ignoreNoise && musicFrames > speechFrames
+    speechFrames = 0
+    musicFrames = 0
     guard !clean.isEmpty, conversation != nil else { return }
+    // Song lyrics or a TV show, not someone talking to you: leave it out.
+    if mostlyMusic {
+      meFrames = 0
+      themFrames = 0
+      pendingHint = nil
+      hintWanted = false
+      return
+    }
     // Only call it yours when your louder voice clearly dominated; otherwise
     // assume it was them, so they always get an answer.
     let who: Talker = meFrames > max(themFrames, 2) ? .me : .them
@@ -432,6 +469,7 @@ final class ListenViewModel {
     themFrames = 0
     conversation?.lines.append(ConversationLine(time: Date(), speaker: who, text: clean))
     autosave()
+    readTheRoom()
     if who == .them {
       lastTheirLineAt = Date().timeIntervalSince(startedAt)
       deliverBestReply()
@@ -486,7 +524,19 @@ final class ListenViewModel {
       calibrationLevels.append(level)
     }
 
-    let events = detector.feed(level: level, pitch: pitch, at: now)
+    // Music, singing, wind, traffic: heard, but not treated as people talking.
+    let sound = gate?.scores ?? SoundScores(speech: 1)
+    let isSpeech = !ignoreNoise || sound.isSpeech
+    if level > detector.noiseFloor + 6 {
+      if isSpeech { speechFrames += 1 } else if sound.isMusic { musicFrames += 1 }
+    }
+    if ignoreNoise, !sound.isSpeech, level > detector.noiseFloor + 6 {
+      soundNote = sound.isMusic ? "Music playing, ignoring it" : "Background noise, ignoring it"
+    } else if sound.isSpeech {
+      soundNote = nil
+    }
+
+    let events = detector.feed(level: isSpeech ? level : -80, pitch: isSpeech ? pitch : nil, at: now)
     talker = detector.current
 
     switch detector.current {
@@ -638,9 +688,10 @@ final class ListenViewModel {
     guard ai.debate, ai.hasKey, meFrames <= max(themFrames, 2) else { return }
     let now = Date().timeIntervalSince(startedAt)
     let words = partial.split(separator: " ").count
-    let enoughNew = words - predictedWords >= 5
-    let stale = words > predictedWords && now - lastPredictAt >= 2.5
-    guard words >= 4, enoughNew || stale else { return }
+    // Start early and refresh often, so the hint is ready the instant they stop.
+    let enoughNew = words - predictedWords >= 4
+    let stale = words > predictedWords && now - lastPredictAt >= 2
+    guard words >= 3, enoughNew || stale else { return }
     predictedWords = words
     lastPredictAt = now
     requestHint(heard: partial)
@@ -652,7 +703,10 @@ final class ListenViewModel {
     run("debate") {
       let still = heard.isEmpty ? "" : "\nThem (still talking): \(heard)"
       let hint = try await self.ai.client.ask(
-        system: self.system(Prompts.bestReply(self.ai.replyStyle, mode: self.ai.bestReplyMode)),
+        system: self.system(
+          Prompts.bestReply(self.ai.replyStyle, mode: self.ai.bestReplyMode)
+            + (self.ai.influence ? "\n\n" + Prompts.influence : "")
+        ),
         user: "Conversation so far:\n\(self.conversation?.recent(12) ?? "")\(still)"
       )
       if self.hintWanted {
@@ -683,6 +737,43 @@ final class ListenViewModel {
     }
   }
 
+  // MARK: - Read the room and likely outcomes
+
+  /// Refreshes the running read every few lines, in the background, so
+  /// hints come out fast and already understand what you're going for.
+  private func readTheRoom() {
+    guard ai.readRoom || ai.outcomes || ai.influence, ai.hasKey else { return }
+    let lines = conversation?.lines.count ?? 0
+    let now = Date().timeIntervalSince(startedAt)
+    guard lines >= 2, lines - linesAtLastRead >= 3 || now - lastReadAt >= 30 else { return }
+    linesAtLastRead = lines
+    lastReadAt = now
+    run("read") {
+      let reply = try await self.ai.client.ask(
+        system: Prompts.base(aboutMe: self.ai.aboutMe, goal: self.ai.goal) + "\n\n"
+          + Prompts.situation(influence: self.ai.influence, outcomes: self.ai.outcomes)
+          + (self.voiceProfile.map { "\n\n" + $0.styleNote } ?? "")
+          + self.memoryNote,
+        user: "Conversation so far:\n\(self.conversation?.recent(30) ?? "")",
+        maxTokens: 2_000,
+        schema: SituationRead.schema
+      )
+      let read = try JSONDecoder().decode(SituationRead.self, from: Data(reply.utf8))
+      self.situation = read
+      self.speakOutcome(read)
+    }
+  }
+
+  /// Likely outcomes: only at real turning points, at most once a minute.
+  private func speakOutcome(_ read: SituationRead) {
+    guard ai.outcomes, read.turningPoint, let first = read.outcomes.first else { return }
+    let now = Date().timeIntervalSince(startedAt)
+    guard now - lastOutcomeAt >= 60 else { return }
+    lastOutcomeAt = now
+    conversation?.notes.append("Likely outcome: \(read.outcomes.joined(separator: "; "))")
+    say("Likely: \(first)")
+  }
+
   // MARK: - Typed math and presets
 
   /// Math typed on the phone instead of heard.
@@ -706,6 +797,7 @@ final class ListenViewModel {
   func apply(_ preset: Preset) {
     switch preset {
     case .social:
+      ai.influence = false; ai.outcomes = false; ai.readRoom = true
       ai.bestReplyMode = .smart
       ai.replyStyle = .adaptive
       helpWhenStuck = true
@@ -713,6 +805,7 @@ final class ListenViewModel {
       moodChimes = true; longTalkNudge = false
       ai.factCheckMode = .off; ai.consistencyMode = .off; ai.predictWords = false
     case .interview:
+      ai.influence = true; ai.outcomes = true; ai.readRoom = true
       ai.bestReplyMode = .always
       ai.replyStyle = .presentation
       helpWhenStuck = true
@@ -720,6 +813,7 @@ final class ListenViewModel {
       moodChimes = false; longTalkNudge = true
       ai.factCheckMode = .off; ai.consistencyMode = .off; ai.predictWords = true
     case .date:
+      ai.influence = false; ai.outcomes = false; ai.readRoom = true
       ai.bestReplyMode = .smart
       ai.replyStyle = .flirty
       helpWhenStuck = true
@@ -727,6 +821,7 @@ final class ListenViewModel {
       moodChimes = true; longTalkNudge = true
       ai.factCheckMode = .off; ai.consistencyMode = .off; ai.predictWords = false
     case .argument:
+      ai.influence = true; ai.outcomes = true; ai.readRoom = true
       ai.bestReplyMode = .always
       ai.replyStyle = .adaptive
       helpWhenStuck = true
@@ -734,12 +829,14 @@ final class ListenViewModel {
       moodChimes = true; longTalkNudge = false
       ai.factCheckMode = .smart; ai.consistencyMode = .smart; ai.predictWords = true
     case .beepsOnly:
+      ai.influence = false; ai.outcomes = false
       ai.bestReplyMode = .off
       helpWhenStuck = false
       turnBeeps = true; holdOnBeep = true; awkwardBeep = true
       moodChimes = true; longTalkNudge = false
       ai.factCheckMode = .off; ai.consistencyMode = .off; ai.predictWords = false
     case .allOff:
+      ai.influence = false; ai.outcomes = false; ai.readRoom = false
       ai.bestReplyMode = .off
       helpWhenStuck = false
       turnBeeps = false; holdOnBeep = false; awkwardBeep = false
@@ -839,12 +936,16 @@ final class ListenViewModel {
   private func system(_ instruction: String) -> String {
     var text = Prompts.base(aboutMe: ai.aboutMe, goal: ai.goal) + "\n\n" + instruction
     if let voiceProfile { text += "\n\n" + voiceProfile.styleNote }
-    // Past talks: People notes for anyone named in this conversation.
-    if ai.useMemory, let memory, let transcript = conversation?.transcript {
-      let notes = memory(transcript)
-      if !notes.isEmpty { text += Prompts.memory(notes) }
-    }
+    if ai.readRoom || ai.influence, let situation { text += "\n\n" + situation.brief }
+    text += memoryNote
     return text
+  }
+
+  /// Past talks: People notes for anyone named in this conversation.
+  private var memoryNote: String {
+    guard ai.useMemory, let memory, let transcript = conversation?.transcript else { return "" }
+    let notes = memory(transcript)
+    return notes.isEmpty ? "" : Prompts.memory(notes)
   }
 
   private var languageName: String {

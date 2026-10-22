@@ -34,6 +34,15 @@ struct ListenView: View {
             Picker("Reply style", selection: $ai.replyStyle) {
               ForEach(ReplyStyle.allCases) { Text($0.rawValue).tag($0) }
             }
+            Toggle(isOn: $ai.readRoom) {
+              SwitchLabel(title: "Read the room", detail: "Works out what you're going for, what they want, and what's next")
+            }
+            Toggle(isOn: $ai.influence) {
+              SwitchLabel(title: "Influence", detail: "Hints that move them where you want. Honest moves only")
+            }
+            Toggle(isOn: $ai.outcomes) {
+              SwitchLabel(title: "Likely outcomes", detail: "Only at real turning points")
+            }
           }
           Toggle("Help me when I freeze", isOn: $listen.helpWhenStuck)
           Toggle("Predict their words", isOn: $ai.predictWords)
@@ -48,6 +57,7 @@ struct ListenView: View {
         }
 
         Section {
+          Toggle("Ignore music and noise", isOn: $listen.ignoreNoise)
           Toggle("Boost quiet voices", isOn: $listen.boostQuiet)
           Button(listen.voiceProfile == nil ? "Learn my voice" : "Redo my voice") {
             listen.stop()
@@ -178,6 +188,12 @@ struct ListenView: View {
         if ai.predictWords, let guess = listen.prediction {
           Label(guess, systemImage: "wand.and.stars").font(.callout).foregroundStyle(.indigo)
         }
+        if let note = listen.soundNote {
+          Label(note, systemImage: "music.note").font(.footnote).foregroundStyle(.secondary)
+        }
+        if ai.readRoom, let read = listen.situation {
+          Label(read.summary, systemImage: "eye").font(.footnote).foregroundStyle(.secondary)
+        }
       }
       if let said = listen.lastSaid {
         Label(said, systemImage: "quote.bubble").font(.callout)
@@ -252,6 +268,19 @@ struct ListenView: View {
     ("zh-CN", "Chinese"), ("ko-KR", "Korean"), ("ja-JP", "Japanese"), ("vi-VN", "Vietnamese"),
     ("ru-RU", "Russian"), ("de-DE", "German"), ("it-IT", "Italian"), ("hi-IN", "Hindi"),
   ]
+}
+
+/// A switch label with a short line under it.
+struct SwitchLabel: View {
+  let title: String
+  let detail: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(title)
+      Text(detail).font(.caption).foregroundStyle(.secondary)
+    }
+  }
 }
 
 /// Off / Smart / Always in one row.

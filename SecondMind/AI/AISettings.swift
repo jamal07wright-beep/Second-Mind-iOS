@@ -85,6 +85,12 @@ final class AISettings {
   var predictSpoken: Bool { didSet { put(predictSpoken, "s2.predictSpoken") } }
   /// Use my Obsidian People notes so it remembers past talks.
   var useMemory: Bool { didSet { put(useMemory, "s2.memory") } }
+  /// Running read of the conversation that every hint uses.
+  var readRoom: Bool { didSet { put(readRoom, "s2.readRoom") } }
+  /// Hints that steer people toward what I want (honest persuasion).
+  var influence: Bool { didSet { put(influence, "s2.influence") } }
+  /// Speak likely outcomes at real turning points.
+  var outcomes: Bool { didSet { put(outcomes, "s2.outcomes") } }
 
   var debate: Bool { bestReplyMode != .off }
   var factCheck: Bool { factCheckMode != .off }
@@ -118,6 +124,9 @@ final class AISettings {
     predictWords = flag("s2.predict", false)
     predictSpoken = flag("s2.predictSpoken", false)
     useMemory = flag("s2.memory", true)
+    readRoom = flag("s2.readRoom", true)
+    influence = flag("s2.influence", false)
+    outcomes = flag("s2.outcomes", false)
     translate = flag("s2.translate", false)
     translateFrom = d.string(forKey: "s2.translateFrom") ?? "es-US"
     planDetection = flag("s2.plans", true)

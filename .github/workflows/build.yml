@@ -73,6 +73,7 @@ jobs:
             -only-testing:SecondMindTests/VoiceAndStoreTests \
             -only-testing:SecondMindTests/Update3Tests \
             -only-testing:SecondMindTests/VoiceProfileTests \
+            -only-testing:SecondMindTests/Update4Tests \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 120 \
             | tee logic.log | grep --line-buffered -E "(Test Case|error:|\*\* TEST)"
