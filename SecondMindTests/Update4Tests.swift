@@ -43,6 +43,21 @@ final class Update4Tests: XCTestCase {
     XCTAssertTrue(Prompts.situation(influence: false, outcomes: false).contains("Keep outcomes empty"))
   }
 
+  func testStylesBringTheirFeatures() {
+    let ai = AISettings()
+    ai.replyStyle = .presentation
+    ai.factCheckMode = .off
+    ai.replyStyle = .adaptive
+    XCTAssertTrue(ai.influence)
+    XCTAssertTrue(ai.outcomes)
+    XCTAssertTrue(ai.readRoom)
+    XCTAssertEqual(ai.factCheckMode, .smart)
+    ai.replyStyle = .balanced
+    XCTAssertFalse(ai.influence)
+    XCTAssertFalse(ai.outcomes)
+    XCTAssertTrue(ai.readRoom)
+  }
+
   func testPresetsSetInfluenceAndOutcomes() {
     let ai = AISettings()
     let listen = ListenViewModel(ai: ai)

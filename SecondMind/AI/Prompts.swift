@@ -118,7 +118,9 @@ enum Prompts {
         Style: adaptive. Read the room from the conversation and the goal, and match it without \
         being told: relaxed and funny with friends, warm and playful when there's chemistry, \
         calm and sharp in a disagreement, professional in an interview or meeting, gentle when \
-        someone is hurting.
+        someone is hurting. Adaptive also means you decide which tools fit the moment: steer \
+        them only when the user is trying to get something from them, and keep it light and \
+        natural when it's just vibes.
         """
     case .balanced:
       return """

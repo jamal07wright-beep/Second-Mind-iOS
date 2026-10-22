@@ -76,7 +76,35 @@ final class AISettings {
   // Stage 2 switches
   /// Best Reply (called Debate in the vault notes).
   var bestReplyMode: FeatureMode { didSet { put(bestReplyMode.rawValue, "s2.bestReplyMode") } }
-  var replyStyle: ReplyStyle { didSet { put(replyStyle.rawValue, "s2.replyStyle") } }
+  var replyStyle: ReplyStyle {
+    didSet {
+      put(replyStyle.rawValue, "s2.replyStyle")
+      if replyStyle != oldValue { applyStyleBundle() }
+    }
+  }
+
+  /// Picking Adaptive or Balanced turns on the features that fit that style.
+  /// Any single switch can still be changed after.
+  func applyStyleBundle() {
+    switch replyStyle {
+    case .adaptive:
+      // Auto-pilot: everything that might help, used only when it fits.
+      readRoom = true
+      influence = true
+      outcomes = true
+      predictWords = true
+      if factCheckMode == .off { factCheckMode = .smart }
+      if consistencyMode == .off { consistencyMode = .smart }
+    case .balanced:
+      // Neutral baseline: steady, no steering.
+      readRoom = true
+      influence = false
+      outcomes = false
+      predictWords = false
+    default:
+      break
+    }
+  }
   var factCheckMode: FeatureMode { didSet { put(factCheckMode.rawValue, "s2.factCheckMode") } }
   var consistencyMode: FeatureMode { didSet { put(consistencyMode.rawValue, "s2.consistencyMode") } }
   /// Guess how their sentence ends while they're still talking.

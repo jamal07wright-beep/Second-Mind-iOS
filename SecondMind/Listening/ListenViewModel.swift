@@ -706,6 +706,9 @@ final class ListenViewModel {
         system: self.system(
           Prompts.bestReply(self.ai.replyStyle, mode: self.ai.bestReplyMode)
             + (self.ai.influence ? "\n\n" + Prompts.influence : "")
+            + (self.ai.influence && self.ai.replyStyle == .adaptive
+              ? " Only steer when the read shows the user wants something from them; otherwise keep it natural."
+              : "")
         ),
         user: "Conversation so far:\n\(self.conversation?.recent(12) ?? "")\(still)"
       )
