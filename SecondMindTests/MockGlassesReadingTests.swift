@@ -102,6 +102,12 @@ final class MockGlassesReadingTests: XCTestCase {
     XCTAssertTrue(said.contains("DOWNTOWN"), "Said: \(said)")
     XCTAssertEqual(viewModel.lastReadText?.uppercased().contains("STOP"), true)
 
+    // Again repeats the same words without another photo.
+    let before = speaker.said.count
+    viewModel.sayAgain()
+    XCTAssertEqual(speaker.said.count, before + 1)
+    XCTAssertEqual(speaker.said.last, speaker.said.first)
+
     viewModel.stop()
     await observeUntil(timeout: 5) { viewModel.sessionState == .stopped || viewModel.sessionState == .idle }
     XCTAssertFalse(viewModel.isOn)
@@ -126,27 +132,6 @@ final class MockGlassesReadingTests: XCTestCase {
     await observeUntil(timeout: 45) { viewModel.spokenCount > 0 }
     step("said: \(speaker.said)")
     XCTAssertEqual(speaker.said.last, "I don't see any words.")
-  }
-
-  func testSayAgainRepeatsWithoutNewPhoto() async throws {
-    try await feedCamera(photo: TestImages.page(lines: ["EXIT LEFT"]))
-
-    let speaker = FakeSpeaker()
-    let viewModel = ReadingViewModel(wearables: Wearables.shared, speaker: speaker)
-    viewModel.autoRead = false
-    self.viewModel = viewModel
-
-    await observeUntil(timeout: 5) { viewModel.hasActiveDevice }
-    viewModel.start()
-    await observeUntil(timeout: 15) { viewModel.isStreaming && viewModel.hasReceivedFirstFrame }
-    viewModel.readNow()
-    await observeUntil(timeout: 45) { viewModel.spokenCount > 0 }
-
-    viewModel.sayAgain()
-    XCTAssertEqual(speaker.said.count, 2)
-    if speaker.said.count == 2 {
-      XCTAssertEqual(speaker.said[0], speaker.said[1])
-    }
   }
 
   func testBackgroundingStopsQuietly() async throws {
