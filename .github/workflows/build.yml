@@ -65,7 +65,7 @@ jobs:
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 60 \
             -maximum-test-execution-time-allowance 120 \
-            | tee test.log | grep --line-buffered -E "(Test Case|Test Suite|error:|\*\* TEST|Testing started)"
+            | tee test.log | grep --line-buffered -E "(Test Case|Test Suite|error:|\*\* TEST|Testing started|SecondMindTest|FigExport)"
 
       - name: Show end of logs if something failed
         if: failure() || cancelled()

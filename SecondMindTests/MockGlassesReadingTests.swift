@@ -33,17 +33,21 @@ final class MockGlassesReadingTests: XCTestCase {
     UserDefaults.standard.removeObject(forKey: "reading.rate")
     try? Wearables.configure()
     MockDeviceKit.shared.enable()
+    step("mock kit on")
     let device = try MockDeviceKit.shared.pairGlasses(model: .rayBanMeta)
     mockDevice = device
     device.powerOn()
     device.don()
+    step("glasses paired and worn")
     try await Task.sleep(nanoseconds: 1_000_000_000)
   }
 
   override func tearDown() async throws {
+    step("tearing down")
     viewModel?.stop()
     viewModel = nil
     await MockDeviceKit.shared.disable()
+    step("torn down")
     mockDevice = nil
     try await super.tearDown()
   }
@@ -55,24 +59,43 @@ final class MockGlassesReadingTests: XCTestCase {
     )
   }
 
-  func testReadNowSpeaksWordsFromGlassesPhoto() async throws {
+  /// Sets the mock camera's video and photo off the main thread. The mock
+  /// prepares the video with AVFoundation, which can wait on the main thread.
+  private func feedCamera(photo: UIImage?) async throws {
     let camera = try XCTUnwrap(mockDevice?.services.camera)
-    camera.setCameraFeed(fileURL: try videoURL())
-    let page = TestImages.page(lines: ["BUS STOP", "ROUTE 22 DOWNTOWN"])
-    camera.setCapturedImage(fileURL: try TestImages.writePNG(page, name: "page.png"))
+    let video = try videoURL()
+    let photoURL = try photo.map { try TestImages.writePNG($0, name: "page-\(UUID().uuidString).png") }
+    step("feeding camera")
+    await Task.detached {
+      camera.setCameraFeed(fileURL: video)
+      if let photoURL { camera.setCapturedImage(fileURL: photoURL) }
+    }.value
+    step("camera fed")
+  }
+
+  private func step(_ text: String, _ name: String = #function) {
+    NSLog("[SecondMindTest] \(name): \(text)")
+  }
+
+  func testReadNowSpeaksWordsFromGlassesPhoto() async throws {
+    try await feedCamera(photo: TestImages.page(lines: ["BUS STOP", "ROUTE 22 DOWNTOWN"]))
 
     let speaker = FakeSpeaker()
     let viewModel = ReadingViewModel(wearables: Wearables.shared, speaker: speaker)
     viewModel.autoRead = false
     self.viewModel = viewModel
 
+    step("waiting for device")
     await observeUntil(timeout: 5) { viewModel.hasActiveDevice }
+    step("starting")
     viewModel.start()
     await observeUntil(timeout: 15) { viewModel.isStreaming && viewModel.hasReceivedFirstFrame }
+    step("streaming: \(viewModel.status)")
     XCTAssertTrue(viewModel.isStreaming)
 
     viewModel.readNow()
     await observeUntil(timeout: 20) { viewModel.spokenCount > 0 }
+    step("spoke: \(viewModel.lastReadText ?? "nothing")")
 
     let said = speaker.said.joined(separator: " ").uppercased()
     XCTAssertTrue(said.contains("BUS"), "Said: \(said)")
@@ -86,9 +109,7 @@ final class MockGlassesReadingTests: XCTestCase {
   }
 
   func testSayAgainRepeatsWithoutNewPhoto() async throws {
-    let camera = try XCTUnwrap(mockDevice?.services.camera)
-    camera.setCameraFeed(fileURL: try videoURL())
-    camera.setCapturedImage(fileURL: try TestImages.writePNG(TestImages.page(lines: ["EXIT LEFT"]), name: "exit.png"))
+    try await feedCamera(photo: TestImages.page(lines: ["EXIT LEFT"]))
 
     let speaker = FakeSpeaker()
     let viewModel = ReadingViewModel(wearables: Wearables.shared, speaker: speaker)
@@ -107,8 +128,7 @@ final class MockGlassesReadingTests: XCTestCase {
   }
 
   func testBackgroundingStopsQuietly() async throws {
-    let camera = try XCTUnwrap(mockDevice?.services.camera)
-    camera.setCameraFeed(fileURL: try videoURL())
+    try await feedCamera(photo: nil)
 
     let viewModel = ReadingViewModel(wearables: Wearables.shared, speaker: FakeSpeaker())
     self.viewModel = viewModel
