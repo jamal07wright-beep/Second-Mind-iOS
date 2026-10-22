@@ -33,25 +33,54 @@ jobs:
       - name: Check settings (free Apple ID safe)
         run: bash scripts/check-settings.sh
 
-      - name: Test with mock glasses
+      - name: Pick simulator
         run: |
           UDID=$(xcrun simctl list devices available -j | python3 scripts/pick-simulator.py)
           echo "Simulator: $UDID"
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID" || true
+
+      - name: Compile app and tests
+        timeout-minutes: 25
+        run: |
           set -o pipefail
-          xcodebuild test \
+          xcodebuild build-for-testing \
             -project SecondMind.xcodeproj \
             -scheme SecondMind \
-            -destination "id=$UDID" \
+            -destination "platform=iOS Simulator,id=$UDID,arch=arm64" \
+            -derivedDataPath dd \
+            | tee compile.log | grep --line-buffered -E "(error:|\*\* TEST BUILD|Resolve Package|Fetching)"
+
+      - name: Test with mock glasses
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project SecondMind.xcodeproj \
+            -scheme SecondMind \
+            -destination "platform=iOS Simulator,id=$UDID,arch=arm64" \
+            -derivedDataPath dd \
             -resultBundlePath TestResults.xcresult \
-            | tee test.log | grep -E "(Test Case|error:|warning: .*SecondMind|\*\* TEST)"
+            -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 60 \
+            -maximum-test-execution-time-allowance 120 \
+            | tee test.log | grep --line-buffered -E "(Test Case|Test Suite|error:|\*\* TEST|Testing started)"
+
+      - name: Show end of logs if something failed
+        if: failure() || cancelled()
+        run: |
+          echo "=== compile.log ==="; tail -n 80 compile.log 2>/dev/null || true
+          echo "=== test.log ==="; tail -n 150 test.log 2>/dev/null || true
 
       - name: Save test results if something failed
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: |
             TestResults.xcresult
+            compile.log
             test.log
           retention-days: 7
 
@@ -65,7 +94,7 @@ jobs:
             -destination generic/platform=iOS \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            | tee build.log | grep -E "(error:|\*\* BUILD)"
+            | tee build.log | grep --line-buffered -E "(error:|\*\* BUILD)"
 
       - name: Check the finished app
         run: bash scripts/check-app.sh build/Build/Products/Release-iphoneos/SecondMind.app
