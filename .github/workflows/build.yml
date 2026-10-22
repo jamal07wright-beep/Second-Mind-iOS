@@ -1,0 +1,85 @@
+# Builds Second-Mind on a free GitHub Mac, tests it against Meta's mock
+# glasses, and only then makes an unsigned .ipa for Sideloadly.
+name: Build Second-Mind
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the newest Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Make the Xcode project
+        run: xcodegen generate
+
+      - name: Check settings (free Apple ID safe)
+        run: bash scripts/check-settings.sh
+
+      - name: Test with mock glasses
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 scripts/pick-simulator.py)
+          echo "Simulator: $UDID"
+          set -o pipefail
+          xcodebuild test \
+            -project SecondMind.xcodeproj \
+            -scheme SecondMind \
+            -destination "id=$UDID" \
+            -resultBundlePath TestResults.xcresult \
+            | tee test.log | grep -E "(Test Case|error:|warning: .*SecondMind|\*\* TEST)"
+
+      - name: Save test results if something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            TestResults.xcresult
+            test.log
+          retention-days: 7
+
+      - name: Build unsigned app for iPhone
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project SecondMind.xcodeproj \
+            -scheme SecondMind \
+            -configuration Release \
+            -destination generic/platform=iOS \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tee build.log | grep -E "(error:|\*\* BUILD)"
+
+      - name: Check the finished app
+        run: bash scripts/check-app.sh build/Build/Products/Release-iphoneos/SecondMind.app
+
+      - name: Package .ipa
+        run: |
+          rm -rf Payload && mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/SecondMind.app Payload/
+          zip -qry SecondMind.ipa Payload
+          ls -lh SecondMind.ipa
+
+      - name: Upload .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecondMind-ipa
+          path: SecondMind.ipa
+          retention-days: 30

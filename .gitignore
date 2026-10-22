@@ -1,0 +1,8 @@
+SecondMind.xcodeproj/
+build/
+DerivedData/
+Payload/
+*.ipa
+*.xcresult
+*.log
+.DS_Store
