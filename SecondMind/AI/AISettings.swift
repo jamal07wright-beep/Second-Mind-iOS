@@ -19,7 +19,10 @@ enum MathStyle: String, CaseIterable, Identifiable {
 @MainActor
 final class AISettings {
   // Claude
+  /// For quick whispers in the moment: speed matters most.
   var model: ClaudeModel { didSet { put(model.rawValue, "ai.model") } }
+  /// For nightly Obsidian notes and "How did I do?": depth matters most.
+  var notesModel: ClaudeModel { didSet { put(notesModel.rawValue, "ai.notesModel") } }
   var aboutMe: String { didSet { put(aboutMe, "ai.aboutMe") } }
   /// Goal for the current conversation; every suggestion leans toward it.
   var goal: String { didSet { put(goal, "ai.goal") } }
@@ -46,7 +49,8 @@ final class AISettings {
   init() {
     let d = UserDefaults.standard
     func flag(_ key: String, _ fallback: Bool) -> Bool { d.object(forKey: key) == nil ? fallback : d.bool(forKey: key) }
-    model = ClaudeModel(rawValue: d.string(forKey: "ai.model") ?? "") ?? .opus
+    model = ClaudeModel(rawValue: d.string(forKey: "ai.model") ?? "") ?? .haiku
+    notesModel = ClaudeModel(rawValue: d.string(forKey: "ai.notesModel") ?? "") ?? .sonnet
     aboutMe = d.string(forKey: "ai.aboutMe") ?? ""
     goal = d.string(forKey: "ai.goal") ?? ""
     elevenLabsVoiceID = d.string(forKey: "voice.elevenID") ?? ElevenLabsClient.defaultVoiceID
@@ -65,6 +69,7 @@ final class AISettings {
   }
 
   var client: ClaudeClient { ClaudeClient(apiKey: Keychain.read("claude"), model: model) }
+  var notesClient: ClaudeClient { ClaudeClient(apiKey: Keychain.read("claude"), model: notesModel) }
   var elevenLabsKey: String? { Keychain.read("elevenlabs") }
 
   func saveClaudeKey(_ key: String) { hasKey = Keychain.save(key, as: "claude") }

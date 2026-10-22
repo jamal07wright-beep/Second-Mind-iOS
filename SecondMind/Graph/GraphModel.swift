@@ -99,7 +99,7 @@ final class GraphModel {
     .joined(separator: "\n\n")
     guard !text.isEmpty else { return }
 
-    let reply = try await ai.client.ask(
+    let reply = try await ai.notesClient.ask(
       system: Prompts.base(aboutMe: ai.aboutMe, goal: "") + "\n\n" + Prompts.graph,
       user: "Day: \(day)\n\n\(text)",
       maxTokens: 16_000,

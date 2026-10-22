@@ -30,13 +30,16 @@ struct SettingsView: View {
               claudeKey = ""
             }
           }
-          Picker("Model", selection: $ai.model) {
+          Picker("In the moment", selection: $ai.model) {
+            ForEach(ClaudeModel.allCases) { Text($0.label).tag($0) }
+          }
+          Picker("Notes and Reflect", selection: $ai.notesModel) {
             ForEach(ClaudeModel.allCases) { Text($0.label).tag($0) }
           }
         } header: {
           Text("Claude")
         } footer: {
-          Text("Get a key at console.anthropic.com. It's paid by use, separate from a Claude plan. Haiku is fastest and cheapest.")
+          Text("Get a key at console.anthropic.com. It's paid by use, separate from a Claude plan. Haiku for quick whispers, Sonnet for the nightly notes and \"How did I do?\".")
         }
 
         Section {

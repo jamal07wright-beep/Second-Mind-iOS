@@ -116,7 +116,7 @@ struct TalkView: View {
     loading = true
     defer { loading = false }
     do {
-      let reply = try await ai.client.ask(
+      let reply = try await ai.notesClient.ask(
         system: Prompts.base(aboutMe: ai.aboutMe, goal: ai.goal) + "\n\n" + Prompts.feedback,
         user: "Conversation:\n\(talk.transcript)\n\nNoticed during it: \(talk.notes.joined(separator: "; "))",
         effort: "medium"
