@@ -50,6 +50,15 @@ struct ListenView: View {
           if let said = listen.lastSaid {
             Label(said, systemImage: "quote.bubble").font(.callout)
           }
+          if let problem = listen.problem {
+            HStack(alignment: .top) {
+              Label(problem, systemImage: "exclamationmark.triangle.fill")
+                .font(.callout)
+                .foregroundStyle(.orange)
+              Spacer()
+              Button("OK") { listen.clearProblem() }.font(.footnote)
+            }
+          }
         } footer: {
           Text("Ask people if they're okay with it before using it around them.")
         }

@@ -57,6 +57,13 @@ struct SettingsView: View {
             .autocorrectionDisabled()
           Toggle("Full-quality voice", isOn: Binding(get: { listen.clearVoice }, set: { listen.clearVoice = $0 }))
           Button("Test the voice") { listen.say("Hey. I'm here whenever you need me.") }
+          Button("Test Claude + voice") { listen.testClaudeAndVoice() }
+          if let said = listen.lastSaid {
+            Text("Last said: \(said)").font(.footnote).foregroundStyle(.secondary)
+          }
+          if let problem = listen.problem {
+            Text(problem).font(.footnote).foregroundStyle(.orange)
+          }
         } header: {
           Text("Voice")
         } footer: {

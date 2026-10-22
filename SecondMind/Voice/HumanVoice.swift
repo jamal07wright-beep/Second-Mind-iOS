@@ -132,16 +132,21 @@ final class HumanVoice: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
   }
 
   private(set) var isSpeaking = false
+  /// Why the ElevenLabs voice didn't play last time, if it didn't.
+  private(set) var lastError: String?
 
   /// Speaks the text and returns when it's finished (or stopped).
   func speak(_ text: String, rate: Float = 0.5) async {
     stop()
     isSpeaking = true
+    lastError = nil
     defer { isSpeaking = false }
 
     if let key = settings.elevenLabsKey {
       let client = ElevenLabsClient(apiKey: key, voiceID: settings.elevenLabsVoiceID)
-      if let data = try? await client.audio(for: text), let audio = try? AVAudioPlayer(data: data) {
+      do {
+        let data = try await client.audio(for: text)
+        let audio = try AVAudioPlayer(data: data)
         audio.delegate = self
         player = audio
         await withCheckedContinuation { continuation in
@@ -150,8 +155,10 @@ final class HumanVoice: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
         }
         player = nil
         return
+      } catch {
+        // Fall through to the phone's own voice, but say why.
+        lastError = "ElevenLabs voice didn't work (\(error.localizedDescription)). Used the iPhone voice."
       }
-      // Fall through to the phone's own voice if the service fails.
     }
 
     let utterance = AVSpeechUtterance(string: text)

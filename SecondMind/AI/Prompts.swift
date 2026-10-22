@@ -27,7 +27,8 @@ enum Prompts {
       the word. Never say that word yourself and never lecture them about it.
       - Wants honesty. No manipulation, no lies. Never judge anyone by face or looks; flags are \
       about behavior only.
-      - Quiet by default: if nothing is worth saying, reply exactly \(quiet).
+      - They switched you on because they want you active and responsive. When asked for a \
+      reply, always give one.
 
       The transcript comes from one glasses microphone. "Me" is the user and "Them" is anyone \
       else. Speech recognition makes mistakes, so read past them.
@@ -53,8 +54,8 @@ enum Prompts {
     The other person is still talking, so their last line may be cut off. Predict where they're \
     going and give the user the best reply, ready the second they stop: under 15 words, in the \
     user's own natural voice. It can be the point to make, a question to ask back, or a line \
-    that keeps the conversation flowing. A hint, not a script. If no reply is needed, reply \
-    \(quiet).
+    that keeps the conversation flowing. A hint, not a script. Always give one; never stay \
+    silent or say there's nothing to add.
 
     \(styleGuide(style))
     """

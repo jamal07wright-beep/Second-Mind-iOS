@@ -87,6 +87,15 @@ final class ListenViewModel {
   @ObservationIgnored private var predictedWords = 0
   @ObservationIgnored private var lastPredictAt: TimeInterval = -.infinity
   @ObservationIgnored private var lastYourTurnAt: TimeInterval = -.infinity
+  /// A line just ended and a Best Reply hint is owed for it.
+  @ObservationIgnored private var hintWanted = false
+  /// When the transcript last got new words (speech, no matter how loud).
+  @ObservationIgnored private var lastWordsAt: TimeInterval = 0
+  @ObservationIgnored private var lastTheirLineAt: TimeInterval = -.infinity
+  @ObservationIgnored private var helpedForLineAt: TimeInterval = -.infinity
+
+  /// The last thing that went wrong, shown on the Listen screen.
+  private(set) var problem: String?
 
   init(ai: AISettings) {
     self.ai = ai
@@ -216,6 +225,7 @@ final class ListenViewModel {
         try? AVAudioSession.sharedInstance().setActive(true)
       }
       await voice.speak(line, rate: speechRate)
+      if let voiceProblem = voice.lastError { report(voiceProblem) }
       if paused { resumeMic() }
       feed.muted = false
     }
@@ -323,8 +333,12 @@ final class ListenViewModel {
 
   private func recognized(_ text: String?, done: Bool) {
     guard isOn else { return }
-    if let text {
+    if let text, text != partial {
       partial = text
+      // New words mean someone is talking, however quiet the mic level is.
+      let now = Date().timeIntervalSince(startedAt)
+      lastWordsAt = now
+      if utteranceStartedAt == nil { utteranceStartedAt = now }
       predictReply()
     }
     guard done else { return }
@@ -350,12 +364,37 @@ final class ListenViewModel {
   private func commit(_ text: String) {
     let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !clean.isEmpty, conversation != nil else { return }
-    let who: Talker = meFrames >= themFrames ? .me : .them
+    // Only call it yours when your louder voice clearly dominated; otherwise
+    // assume it was them, so they always get an answer.
+    let who: Talker = meFrames > max(themFrames, 2) ? .me : .them
     meFrames = 0
     themFrames = 0
     conversation?.lines.append(ConversationLine(time: Date(), speaker: who, text: clean))
     autosave()
+    if who == .them {
+      lastTheirLineAt = Date().timeIntervalSince(startedAt)
+      deliverBestReply()
+    }
     react(to: clean, from: who)
+  }
+
+  /// Best Reply: after every line from them, say the hint. Uses the one
+  /// built while they were talking if it's ready; otherwise asks now and
+  /// says it the moment it arrives.
+  private func deliverBestReply() {
+    guard ai.debate else { return }
+    guard ai.hasKey else {
+      report("Best Reply needs your Claude key in Settings.")
+      return
+    }
+    let now = Date().timeIntervalSince(startedAt)
+    if let hint = pendingHint, now - hint.at < 20 {
+      pendingHint = nil
+      say(hint.text)
+      return
+    }
+    hintWanted = true
+    requestHint(heard: "")
   }
 
   /// Keeps a copy on disk, so nothing is lost if the app is closed mid-talk.
@@ -388,21 +427,33 @@ final class ListenViewModel {
     case .me:
       meFrames += 1
       lastSpeechAt = now
-      if utteranceStartedAt == nil { utteranceStartedAt = now }
     case .them:
       themFrames += 1
       lastSpeechAt = now
-      if utteranceStartedAt == nil { utteranceStartedAt = now }
     case .nobody:
       break
     }
 
-    // A pause, or a very long stretch, closes the current line.
-    if let started = utteranceStartedAt, feed.request != nil,
-      now - lastSpeechAt >= 0.9 || now - started >= 50
+    // A line ends when no new words have come for a second (or it gets very
+    // long). Words, not loudness, so quiet mics still work.
+    let lastActivity = max(lastWordsAt, lastSpeechAt)
+    if let started = utteranceStartedAt, feed.request != nil, !partial.isEmpty,
+      now - lastActivity >= 1.0 || now - started >= 50
     {
       finishUtterance()
       utteranceStartedAt = nil
+    }
+
+    // Help when I freeze, even if the loudness guess missed the turn.
+    if helpWhenStuck, !ai.debate, ai.hasKey, lastTheirLineAt > helpedForLineAt,
+      now - lastTheirLineAt >= 3.5, now - lastActivity >= 3.5, now - lastHelpAt >= 15
+    {
+      helpedForLineAt = lastTheirLineAt
+      lastHelpAt = now
+      if turnBeeps { play(.awkwardPause) }
+      run("stuck") {
+        try await self.ask(Prompts.stuck + "\n\n" + Prompts.styleGuide(self.ai.replyStyle), recent: 14)
+      }
     }
 
     for event in events { handle(event, at: now) }
@@ -414,10 +465,6 @@ final class ListenViewModel {
     case .yourTurn:
       lastYourTurnAt = now
       if turnBeeps { play(.yourTurn) }
-      if let hint = pendingHint, now - hint.at < 25 {
-        pendingHint = nil
-        say(hint.text)
-      }
     case .holdOn:
       if turnBeeps { play(.holdOn) }
     case .talkingLong:
@@ -430,8 +477,9 @@ final class ListenViewModel {
       }
     case .stalled:
       if turnBeeps { play(.awkwardPause) }
-      if helpWhenStuck, ai.hasKey, now - lastHelpAt >= 20 {
+      if helpWhenStuck, !ai.debate, ai.hasKey, now - lastHelpAt >= 15 {
         lastHelpAt = now
+        helpedForLineAt = lastTheirLineAt
         run("stuck") {
           try await self.ask(Prompts.stuck + "\n\n" + Prompts.styleGuide(self.ai.replyStyle), recent: 14)
         }
@@ -510,28 +558,33 @@ final class ListenViewModel {
   /// heard so far, and refreshes it every few new words. When they stop,
   /// the newest hint is already waiting.
   private func predictReply() {
-    guard ai.debate, ai.hasKey, themFrames > meFrames else { return }
+    // Skip only when it's clearly your own voice.
+    guard ai.debate, ai.hasKey, meFrames <= max(themFrames, 2) else { return }
     let now = Date().timeIntervalSince(startedAt)
     let words = partial.split(separator: " ").count
-    let enoughNew = words - predictedWords >= 6
-    let stale = words > predictedWords && now - lastPredictAt >= 3
-    guard words >= 6, enoughNew || stale else { return }
+    let enoughNew = words - predictedWords >= 5
+    let stale = words > predictedWords && now - lastPredictAt >= 2.5
+    guard words >= 4, enoughNew || stale else { return }
     predictedWords = words
     lastPredictAt = now
-    let heard = partial
+    requestHint(heard: partial)
+  }
+
+  /// Asks Claude for the Best Reply. If a finished line is waiting on it,
+  /// says it right away; otherwise keeps it ready for when they stop.
+  private func requestHint(heard: String) {
     run("debate") {
+      let still = heard.isEmpty ? "" : "\nThem (still talking): \(heard)"
       let hint = try await self.ai.client.ask(
         system: self.system(Prompts.bestReply(self.ai.replyStyle)),
-        user: "Conversation so far:\n\(self.conversation?.recent(12) ?? "")\nThem (still talking): \(heard)"
+        user: "Conversation so far:\n\(self.conversation?.recent(12) ?? "")\(still)"
       )
-      guard hint != Prompts.quiet else { return }
-      let ready = Date().timeIntervalSince(self.startedAt)
-      if self.detector.current == .nobody, ready - self.lastYourTurnAt < 4 {
-        // They already stopped and it's your turn: say it right away.
+      if self.hintWanted {
+        self.hintWanted = false
         self.pendingHint = nil
         self.say(hint)
       } else {
-        self.pendingHint = (hint, ready)
+        self.pendingHint = (hint, Date().timeIntervalSince(self.startedAt))
       }
     }
   }
@@ -612,7 +665,8 @@ final class ListenViewModel {
       do {
         try await job()
       } catch {
-        self.status = "\(name.capitalized): \(error.localizedDescription)"
+        if name == "debate" { self.hintWanted = false }
+        self.report("\(name == "debate" ? "Best Reply" : name.capitalized): \(error.localizedDescription)")
       }
     }
   }
@@ -640,6 +694,33 @@ final class ListenViewModel {
 
   private func save(_ value: Bool, _ key: String) {
     UserDefaults.standard.set(value, forKey: key)
+  }
+
+  /// Shows a problem on the Listen screen instead of failing silently.
+  private func report(_ message: String) {
+    problem = message
+  }
+
+  func clearProblem() {
+    problem = nil
+  }
+
+  /// One tap check of the whole chain: Claude key, Claude, and the voice.
+  func testClaudeAndVoice() {
+    guard ai.hasKey else {
+      report("No Claude key saved yet. Paste it in Settings and tap Save.")
+      say("I don't have your Claude key yet.")
+      return
+    }
+    problem = nil
+    lastSaid = "Asking Claude…"
+    run("test") {
+      let hello = try await self.ai.client.ask(
+        system: self.system("Greet the user in one short, warm sentence so they know you're working."),
+        user: "Say hi."
+      )
+      self.say(hello)
+    }
   }
 
   private func fail(_ message: String) {
