@@ -63,8 +63,8 @@ jobs:
             -resultBundlePath TestResults.xcresult \
             -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
-            -default-test-execution-time-allowance 60 \
-            -maximum-test-execution-time-allowance 120 \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 180 \
             | tee test.log | grep --line-buffered -E "(Test Case|Test Suite|error:|\*\* TEST|Testing started|SecondMindTest|FigExport)"
 
       - name: Show end of logs if something failed

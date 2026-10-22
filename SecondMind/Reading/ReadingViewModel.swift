@@ -76,7 +76,7 @@ final class ReadingViewModel {
     static let rate = "reading.rate"
   }
 
-  init(wearables: WearablesInterface, speaker: Speaker, photoTimeout: Duration = .seconds(4)) {
+  init(wearables: WearablesInterface, speaker: Speaker, photoTimeout: Duration = .seconds(10)) {
     self.wearables = wearables
     self.speaker = speaker
     self.photoTimeout = photoTimeout

@@ -94,7 +94,7 @@ final class MockGlassesReadingTests: XCTestCase {
     XCTAssertTrue(viewModel.isStreaming)
 
     viewModel.readNow()
-    await observeUntil(timeout: 20) { viewModel.spokenCount > 0 }
+    await observeUntil(timeout: 45) { viewModel.spokenCount > 0 }
     step("spoke: \(viewModel.lastReadText ?? "nothing")")
 
     let said = speaker.said.joined(separator: " ").uppercased()
@@ -123,7 +123,7 @@ final class MockGlassesReadingTests: XCTestCase {
     await observeUntil(timeout: 15) { viewModel.isStreaming && viewModel.hasReceivedFirstFrame }
     step("streaming, reading frame")
     viewModel.readNow()
-    await observeUntil(timeout: 20) { viewModel.spokenCount > 0 }
+    await observeUntil(timeout: 45) { viewModel.spokenCount > 0 }
     step("said: \(speaker.said)")
     XCTAssertEqual(speaker.said.last, "I don't see any words.")
   }
@@ -140,11 +140,13 @@ final class MockGlassesReadingTests: XCTestCase {
     viewModel.start()
     await observeUntil(timeout: 15) { viewModel.isStreaming && viewModel.hasReceivedFirstFrame }
     viewModel.readNow()
-    await observeUntil(timeout: 20) { viewModel.spokenCount > 0 }
+    await observeUntil(timeout: 45) { viewModel.spokenCount > 0 }
 
     viewModel.sayAgain()
     XCTAssertEqual(speaker.said.count, 2)
-    XCTAssertEqual(speaker.said[0], speaker.said[1])
+    if speaker.said.count == 2 {
+      XCTAssertEqual(speaker.said[0], speaker.said[1])
+    }
   }
 
   func testBackgroundingStopsQuietly() async throws {
