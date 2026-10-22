@@ -108,6 +108,26 @@ final class MockGlassesReadingTests: XCTestCase {
     XCTAssertFalse(viewModel.showError, "Stopping should not show an error: \(viewModel.errorMessage)")
   }
 
+  /// Live-frame path (practice mode): the plant video has no words.
+  func testReadNowFromLiveFrameSaysNoWords() async throws {
+    try await feedCamera(photo: nil)
+
+    let speaker = FakeSpeaker()
+    let viewModel = ReadingViewModel(wearables: Wearables.shared, speaker: speaker)
+    viewModel.autoRead = false
+    viewModel.usePhotoCapture = false
+    self.viewModel = viewModel
+
+    await observeUntil(timeout: 5) { viewModel.hasActiveDevice }
+    viewModel.start()
+    await observeUntil(timeout: 15) { viewModel.isStreaming && viewModel.hasReceivedFirstFrame }
+    step("streaming, reading frame")
+    viewModel.readNow()
+    await observeUntil(timeout: 20) { viewModel.spokenCount > 0 }
+    step("said: \(speaker.said)")
+    XCTAssertEqual(speaker.said.last, "I don't see any words.")
+  }
+
   func testSayAgainRepeatsWithoutNewPhoto() async throws {
     try await feedCamera(photo: TestImages.page(lines: ["EXIT LEFT"]))
 

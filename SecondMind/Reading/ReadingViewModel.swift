@@ -63,6 +63,7 @@ final class ReadingViewModel {
   @ObservationIgnored private var detector = StillnessDetector()
   @ObservationIgnored private var pendingPhotoID = 0
   @ObservationIgnored private var pendingForce = false
+  @ObservationIgnored private var awaitingPhotoID: Int?
   @ObservationIgnored private var restartWhenStopped = false
   @ObservationIgnored private var deviceMonitorTask: Task<Void, Never>?
   @ObservationIgnored private var lifecycleTask: Task<Void, Never>?
@@ -301,27 +302,34 @@ final class ReadingViewModel {
     guard !isWorking else { return }
     isWorking = true
     status = "Reading…"
+    Task { await runRead(force: force) }
+  }
 
-    if usePhotoCapture, isStreaming, let stream = camera?.stream, stream.capturePhoto(format: .jpeg) {
+  private func runRead(force: Bool) async {
+    if usePhotoCapture, isStreaming, let stream = camera?.stream {
       pendingPhotoID += 1
-      pendingForce = force
       let id = pendingPhotoID
-      let timeout = photoTimeout
-      Task { @MainActor [weak self] in
-        try? await Task.sleep(for: timeout)
-        guard let self, self.pendingPhotoID == id, self.isWorking else { return }
-        // No photo came back. Use the live frame instead.
-        self.pendingPhotoID += 1
-        await self.recognize(self.latestFrame, force: force)
+      awaitingPhotoID = id
+      pendingForce = force
+      trace("taking photo")
+      // Off the main thread so the screen never freezes while the glasses work.
+      let started = await Task.detached { stream.capturePhoto(format: .jpeg) }.value
+      trace("photo started: \(started)")
+      if started {
+        try? await Task.sleep(for: photoTimeout)
+        // The photo already came back and was handled.
+        guard awaitingPhotoID == id else { return }
+        trace("no photo came back, using the live frame")
       }
-    } else {
-      Task { await recognize(latestFrame, force: force) }
+      awaitingPhotoID = nil
     }
+    await recognize(latestFrame, force: force)
   }
 
   private func photoArrived(_ image: UIImage?) {
-    guard isWorking else { return }
-    pendingPhotoID += 1  // cancels the timeout
+    trace("photo arrived: \(image != nil)")
+    guard awaitingPhotoID != nil else { return }
+    awaitingPhotoID = nil
     let force = pendingForce
     Task { await recognize(image ?? latestFrame, force: force) }
   }
@@ -334,7 +342,9 @@ final class ReadingViewModel {
     }
     let text: String
     do {
+      trace("finding words")
       text = try await TextRecognizer.recognize(image)
+      trace("found \(text.count) characters")
     } catch {
       status = "Couldn't read that"
       return
@@ -379,6 +389,12 @@ final class ReadingViewModel {
         if self.isOn { self.stop() }
       }
     }
+  }
+
+  private func trace(_ text: String) {
+    #if DEBUG
+    NSLog("[SecondMindTest] reading: \(text)")
+    #endif
   }
 
   /// Errors while turning off on purpose are just teardown noise.
