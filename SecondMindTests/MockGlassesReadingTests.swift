@@ -73,6 +73,16 @@ final class MockGlassesReadingTests: XCTestCase {
     step("camera fed")
   }
 
+  /// Real text finding is tested on its own in TextRecognizerTests. Here a
+  /// stand-in "finds" the page only in the wide glasses photo (our page is
+  /// 900 x 600), never in the tall live video frame. That proves the photo,
+  /// not the video, reached the reading step, without slow simulator OCR.
+  private func makeViewModel(speaker: FakeSpeaker) -> ReadingViewModel {
+    ReadingViewModel(wearables: Wearables.shared, speaker: speaker) { image in
+      image.size.width > image.size.height ? "BUS STOP\nROUTE 22 DOWNTOWN" : ""
+    }
+  }
+
   private func step(_ text: String, _ name: String = #function) {
     NSLog("[SecondMindTest] \(name): \(text)")
   }
@@ -81,7 +91,7 @@ final class MockGlassesReadingTests: XCTestCase {
     try await feedCamera(photo: TestImages.page(lines: ["BUS STOP", "ROUTE 22 DOWNTOWN"]))
 
     let speaker = FakeSpeaker()
-    let viewModel = ReadingViewModel(wearables: Wearables.shared, speaker: speaker)
+    let viewModel = makeViewModel(speaker: speaker)
     viewModel.autoRead = false
     self.viewModel = viewModel
 
@@ -119,7 +129,7 @@ final class MockGlassesReadingTests: XCTestCase {
     try await feedCamera(photo: nil)
 
     let speaker = FakeSpeaker()
-    let viewModel = ReadingViewModel(wearables: Wearables.shared, speaker: speaker)
+    let viewModel = makeViewModel(speaker: speaker)
     viewModel.autoRead = false
     viewModel.usePhotoCapture = false
     self.viewModel = viewModel
@@ -137,7 +147,7 @@ final class MockGlassesReadingTests: XCTestCase {
   func testBackgroundingStopsQuietly() async throws {
     try await feedCamera(photo: nil)
 
-    let viewModel = ReadingViewModel(wearables: Wearables.shared, speaker: FakeSpeaker())
+    let viewModel = makeViewModel(speaker: FakeSpeaker())
     self.viewModel = viewModel
 
     await observeUntil(timeout: 5) { viewModel.hasActiveDevice }

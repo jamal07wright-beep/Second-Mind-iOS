@@ -70,15 +70,22 @@ final class ReadingViewModel {
   @ObservationIgnored private let sessionTokens = ListenerTokenBag()
   @ObservationIgnored private let streamTokens = ListenerTokenBag()
   @ObservationIgnored private let photoTimeout: Duration
+  @ObservationIgnored private let findWords: @Sendable (UIImage) async throws -> String
 
   private enum Keys {
     static let autoRead = "reading.autoRead"
     static let rate = "reading.rate"
   }
 
-  init(wearables: WearablesInterface, speaker: Speaker, photoTimeout: Duration = .seconds(10)) {
+  init(
+    wearables: WearablesInterface,
+    speaker: Speaker,
+    photoTimeout: Duration = .seconds(10),
+    findWords: @escaping @Sendable (UIImage) async throws -> String = { try await TextRecognizer.recognize($0) }
+  ) {
     self.wearables = wearables
     self.speaker = speaker
+    self.findWords = findWords
     self.photoTimeout = photoTimeout
     self.deviceSelector = AutoDeviceSelector(wearables: wearables)
     if UserDefaults.standard.object(forKey: Keys.autoRead) != nil {
@@ -343,7 +350,7 @@ final class ReadingViewModel {
     let text: String
     do {
       trace("finding words")
-      text = try await TextRecognizer.recognize(image)
+      text = try await findWords(image)
       trace("found \(text.count) characters")
     } catch {
       status = "Couldn't read that"

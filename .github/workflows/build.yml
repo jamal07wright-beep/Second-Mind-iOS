@@ -51,8 +51,25 @@ jobs:
             -derivedDataPath dd \
             | tee compile.log | grep --line-buffered -E "(error:|\*\* TEST BUILD|Resolve Package|Fetching)"
 
+      - name: Test reading logic and word finding
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project SecondMind.xcodeproj \
+            -scheme SecondMind \
+            -destination "platform=iOS Simulator,id=$UDID,arch=arm64" \
+            -derivedDataPath dd \
+            -resultBundlePath LogicResults.xcresult \
+            -only-testing:SecondMindTests/StillnessDetectorTests \
+            -only-testing:SecondMindTests/TextToolsTests \
+            -only-testing:SecondMindTests/TextRecognizerTests \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            | tee logic.log | grep --line-buffered -E "(Test Case|error:|\*\* TEST)"
+
       - name: Test with mock glasses
-        timeout-minutes: 20
+        timeout-minutes: 15
         run: |
           set -o pipefail
           xcodebuild test-without-building \
@@ -61,11 +78,12 @@ jobs:
             -destination "platform=iOS Simulator,id=$UDID,arch=arm64" \
             -derivedDataPath dd \
             -resultBundlePath TestResults.xcresult \
+            -only-testing:SecondMindTests/MockGlassesReadingTests \
             -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 180 \
-            | tee test.log | grep --line-buffered -E "(Test Case|Test Suite|error:|\*\* TEST|Testing started|SecondMindTest|FigExport)"
+            | tee test.log | grep --line-buffered -E "(Test Case|Test Suite|error:|\*\* TEST|Testing started|SecondMindTest)"
 
       - name: Show end of logs if something failed
         if: failure() || cancelled()
