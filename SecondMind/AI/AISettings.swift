@@ -9,6 +9,16 @@ import Foundation
 import Observation
 import Security
 
+/// How Best Reply and "help me when I freeze" should sound.
+enum ReplyStyle: String, CaseIterable, Identifiable {
+  case adaptive = "Adaptive"
+  case balanced = "Balanced"
+  case flirty = "Intimate / Flirty"
+  case presentation = "Presentation"
+  case businessCasual = "Business Casual"
+  var id: String { rawValue }
+}
+
 enum MathStyle: String, CaseIterable, Identifiable {
   case answer = "Just the answer"
   case explain = "Walk me through it"
@@ -34,7 +44,9 @@ final class AISettings {
   private(set) var hasElevenLabsKey: Bool
 
   // Stage 2 switches
+  /// Best Reply (called Debate in the vault notes).
   var debate: Bool { didSet { put(debate, "s2.debate") } }
+  var replyStyle: ReplyStyle { didSet { put(replyStyle.rawValue, "s2.replyStyle") } }
   var factCheck: Bool { didSet { put(factCheck, "s2.factCheck") } }
   var consistency: Bool { didSet { put(consistency, "s2.consistency") } }
   var translate: Bool { didSet { put(translate, "s2.translate") } }
@@ -56,6 +68,7 @@ final class AISettings {
     elevenLabsVoiceID = d.string(forKey: "voice.elevenID") ?? ElevenLabsClient.defaultVoiceID
     appleVoiceID = d.string(forKey: "voice.appleID")
     debate = flag("s2.debate", false)
+    replyStyle = ReplyStyle(rawValue: d.string(forKey: "s2.replyStyle") ?? "") ?? .adaptive
     factCheck = flag("s2.factCheck", false)
     consistency = flag("s2.consistency", false)
     translate = flag("s2.translate", false)

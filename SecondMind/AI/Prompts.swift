@@ -47,12 +47,57 @@ enum Prompts {
     words, in their own natural voice. No quotes, no intro.
     """
 
-  static let debate = """
-    The other person is still talking, so their last line may be cut off. Predict where their \
-    point is going and give the user a hint for a strong reply, ready the second they stop: \
-    under 15 words, the key point to make or the question to ask back. A hint, not a script. \
-    If no reply is needed, reply \(quiet).
+  /// Best Reply: the hint for what to say next, in the chosen style.
+  static func bestReply(_ style: ReplyStyle) -> String {
     """
+    The other person is still talking, so their last line may be cut off. Predict where they're \
+    going and give the user the best reply, ready the second they stop: under 15 words, in the \
+    user's own natural voice. It can be the point to make, a question to ask back, or a line \
+    that keeps the conversation flowing. A hint, not a script. If no reply is needed, reply \
+    \(quiet).
+
+    \(styleGuide(style))
+    """
+  }
+
+  static func styleGuide(_ style: ReplyStyle) -> String {
+    switch style {
+    case .adaptive:
+      return """
+        Style: adaptive. Read the room from the conversation and the goal, and match it without \
+        being told: relaxed and funny with friends, warm and playful when there's chemistry, \
+        calm and sharp in a disagreement, professional in an interview or meeting, gentle when \
+        someone is hurting.
+        """
+    case .balanced:
+      return """
+        Style: balanced. Neutral, friendly, and clear every time. Don't shift tone with the \
+        situation; just give a solid, kind, sensible reply.
+        """
+    case .flirty:
+      return """
+        Style: intimate and flirty. Playful, warm, confident, a little teasing, with genuine \
+        interest in them. Read their signals: lean in when they're into it, and pull back to \
+        friendly if they seem uncomfortable or uninterested. Never pushy, never crude unless \
+        they set that tone first, always respectful of a no.
+        """
+    case .presentation:
+      return """
+        Style: presentation. Professional and persuasive, for interviews, pitching ideas, and \
+        marketing. Clear and confident, lead with the strongest point, use concrete examples \
+        and the user's own stories, and end with a question or next step. Use ideas from the \
+        48 Laws of Power for awareness and honest tactics only: control the frame, mind your \
+        timing, say less than necessary, let them talk, never outshine the person deciding. \
+        No lies and no manipulation.
+        """
+    case .businessCasual:
+      return """
+        Style: business casual. Relaxed but professional, for coworkers, networking, and small \
+        talk at work. Friendly and easy, a little humor, nothing too personal, and keep a \
+        good impression.
+        """
+    }
+  }
 
   static let factCheck = """
     Check the factual claims in the newest lines (numbers, dates, news, records, facts), from \

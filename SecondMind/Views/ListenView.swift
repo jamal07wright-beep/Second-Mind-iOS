@@ -61,15 +61,25 @@ struct ListenView: View {
           }
         }
 
+        Section {
+          Toggle("Best Reply", isOn: $ai.debate)
+          Picker("Reply style", selection: $ai.replyStyle) {
+            ForEach(ReplyStyle.allCases) { Text($0.rawValue).tag($0) }
+          }
+          Toggle("Help me when I freeze", isOn: $listen.helpWhenStuck)
+        } header: {
+          Text("What to say")
+        } footer: {
+          Text(Self.styleHint(ai.replyStyle))
+        }
+
         Section("Social Push") {
           Toggle("Timing beeps", isOn: $listen.turnBeeps)
           Toggle("Mood chimes", isOn: $listen.moodChimes)
-          Toggle("Help me when I freeze", isOn: $listen.helpWhenStuck)
           Toggle("Nudge if I talk too long", isOn: $listen.longTalkNudge)
         }
 
         Section {
-          Toggle("Debate", isOn: $ai.debate)
           Toggle("Fact Check", isOn: $ai.factCheck)
           Toggle("Consistency Check", isOn: $ai.consistency)
           Toggle("Math", isOn: $ai.math)
@@ -134,6 +144,16 @@ struct ListenView: View {
     case .me: return "You're talking"
     case .them: return "They're talking"
     case .nobody: return listen.usingGlassesMic ? "Glasses mic" : "Phone mic"
+    }
+  }
+
+  static func styleHint(_ style: ReplyStyle) -> String {
+    switch style {
+    case .adaptive: return "Reads the room and matches it. No switching needed."
+    case .balanced: return "Neutral, friendly, clear. Same tone every time."
+    case .flirty: return "Playful and warm. Backs off if they're not feeling it."
+    case .presentation: return "Professional and persuasive. Interviews, pitches, ideas."
+    case .businessCasual: return "Relaxed but professional. Coworkers and networking."
     }
   }
 

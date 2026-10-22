@@ -206,6 +206,13 @@ final class RequestTests: XCTestCase {
     XCTAssertNil(body["thinking"], "Opus 5.5 thinking can't be disabled; don't send it")
   }
 
+  func testEveryReplyStyleHasItsOwnGuide() {
+    let guides = ReplyStyle.allCases.map { Prompts.styleGuide($0) }
+    XCTAssertEqual(Set(guides).count, ReplyStyle.allCases.count)
+    XCTAssertTrue(Prompts.bestReply(.flirty).contains("respectful of a no"))
+    XCTAssertTrue(Prompts.bestReply(.presentation).contains("No lies and no manipulation"))
+  }
+
   func testClaudeNeedsKey() {
     XCTAssertThrowsError(try ClaudeClient(apiKey: nil).makeRequest(system: "", user: "", maxTokens: 1, effort: "low"))
   }

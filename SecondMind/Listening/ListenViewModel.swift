@@ -432,7 +432,9 @@ final class ListenViewModel {
       if turnBeeps { play(.awkwardPause) }
       if helpWhenStuck, ai.hasKey, now - lastHelpAt >= 20 {
         lastHelpAt = now
-        run("stuck") { try await self.ask(Prompts.stuck, recent: 14) }
+        run("stuck") {
+          try await self.ask(Prompts.stuck + "\n\n" + Prompts.styleGuide(self.ai.replyStyle), recent: 14)
+        }
       }
     }
   }
@@ -519,7 +521,7 @@ final class ListenViewModel {
     let heard = partial
     run("debate") {
       let hint = try await self.ai.client.ask(
-        system: self.system(Prompts.debate),
+        system: self.system(Prompts.bestReply(self.ai.replyStyle)),
         user: "Conversation so far:\n\(self.conversation?.recent(12) ?? "")\nThem (still talking): \(heard)"
       )
       guard hint != Prompts.quiet else { return }
