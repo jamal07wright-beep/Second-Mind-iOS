@@ -53,7 +53,8 @@ struct ClaudeClient {
     maxTokens: Int,
     effort: String,
     webSearch: Bool = false,
-    schema: [String: Any]? = nil
+    schema: [String: Any]? = nil,
+    images: [Data] = []
   ) throws -> URLRequest {
     guard let apiKey, !apiKey.isEmpty else { throw ClaudeError.noKey }
     var request = URLRequest(url: Self.endpoint)
@@ -68,11 +69,23 @@ struct ClaudeClient {
       // Structured output: the reply is JSON matching this schema.
       outputConfig["format"] = ["type": "json_schema", "schema": schema]
     }
+    // Pictures (JPEG) go first, then the text.
+    var content: Any = user
+    if !images.isEmpty {
+      var blocks: [[String: Any]] = images.map { jpeg in
+        [
+          "type": "image",
+          "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
+        ]
+      }
+      blocks.append(["type": "text", "text": user])
+      content = blocks
+    }
     var body: [String: Any] = [
       "model": model.rawValue,
       "max_tokens": maxTokens,
       "system": system,
-      "messages": [["role": "user", "content": user]],
+      "messages": [["role": "user", "content": content]],
       "output_config": outputConfig,
     ]
     if webSearch {
@@ -118,7 +131,8 @@ struct ClaudeClient {
     maxTokens: Int = 2_000,
     effort: String = "low",
     webSearch: Bool = false,
-    schema: [String: Any]? = nil
+    schema: [String: Any]? = nil,
+    images: [Data] = []
   ) async throws -> String {
     let request = try makeRequest(
       system: system,
@@ -126,7 +140,8 @@ struct ClaudeClient {
       maxTokens: maxTokens,
       effort: effort,
       webSearch: webSearch,
-      schema: schema
+      schema: schema,
+      images: images
     )
     let (data, response) = try await session.data(for: request)
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0

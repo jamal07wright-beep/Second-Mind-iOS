@@ -14,8 +14,10 @@ struct RootView: View {
 
   var body: some View {
     TabView {
-      ListenView(listen: state.listen, ai: state.ai, reading: state.reading)
+      ListenView(listen: state.listen, ai: state.ai, reading: state.reading, coach: state.coach)
         .tabItem { Label("Listen", systemImage: "ear") }
+      CoachView(coach: state.coach, listen: state.listen, reading: state.reading)
+        .tabItem { Label("Coach", systemImage: "gamecontroller") }
       ContentView(
         connection: state.connection,
         reading: state.reading,
@@ -30,7 +32,10 @@ struct RootView: View {
     }
     .tint(.indigo)
     .onChange(of: state.reading.isOn) { _, on in
-      if on { state.listen.stop() }
+      if on {
+        state.listen.stop()
+        state.coach.stop()
+      }
     }
     .onChange(of: scenePhase) { _, phase in
       // Any finished day that hasn't become notes yet gets built now.

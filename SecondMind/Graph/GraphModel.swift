@@ -61,6 +61,38 @@ final class GraphModel {
       .appendingPathComponent("Obsidian", isDirectory: true)
   }
 
+  @ObservationIgnored private var peopleCache: (names: [String], at: Date)?
+
+  /// What the vault remembers about anyone named in `text`: the newest part
+  /// of their People page. Feeds Best Reply and Consistency Check.
+  func peopleNotes(for text: String, limit: Int = 1_500) -> String {
+    let vault = resolveVault()
+    let base = vault ?? fallbackFolder
+    let access = vault?.startAccessingSecurityScopedResource() ?? false
+    defer { if access { vault?.stopAccessingSecurityScopedResource() } }
+
+    let folder = base.appendingPathComponent("\(DayGraph.root)/People", isDirectory: true)
+    let names: [String]
+    if let cache = peopleCache, Date().timeIntervalSince(cache.at) < 120 {
+      names = cache.names
+    } else {
+      let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+      names = files.filter { $0.hasSuffix(".md") }.map { String($0.dropLast(3)) }
+      peopleCache = (names, Date())
+    }
+
+    let lower = text.lowercased()
+    var out = ""
+    for name in names where name.count >= 2 && lower.contains(name.lowercased()) {
+      guard let page = try? String(contentsOf: folder.appendingPathComponent("\(name).md"), encoding: .utf8) else {
+        continue
+      }
+      out += "\n## \(name)\n" + String(page.suffix(600))
+      if out.count >= limit { break }
+    }
+    return String(out.prefix(limit))
+  }
+
   /// Builds every finished day. With `includeToday`, today too.
   func buildPending(includeToday: Bool) async {
     guard !isBuilding else { return }

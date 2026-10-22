@@ -135,19 +135,43 @@ final class HumanVoice: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
   /// Why the ElevenLabs voice didn't play last time, if it didn't.
   private(set) var lastError: String?
 
+  /// Audio ready to play: the human voice if it downloaded, otherwise the text
+  /// for the iPhone voice.
+  enum Prepared {
+    case audio(Data, text: String)
+    case phone(String)
+  }
+
+  /// Gets the voice ready before anything else happens, so the glasses audio
+  /// switch never cuts off the first words.
+  func prepare(_ text: String) async -> Prepared {
+    lastError = nil
+    guard let key = settings.elevenLabsKey else { return .phone(text) }
+    do {
+      let data = try await ElevenLabsClient(apiKey: key, voiceID: settings.elevenLabsVoiceID).audio(for: text)
+      return .audio(data, text: text)
+    } catch {
+      lastError = "ElevenLabs voice didn't work (\(error.localizedDescription)). Used the iPhone voice."
+      return .phone(text)
+    }
+  }
+
   /// Speaks the text and returns when it's finished (or stopped).
   func speak(_ text: String, rate: Float = 0.5) async {
+    await play(prepare(text), rate: rate)
+  }
+
+  func play(_ prepared: Prepared, rate: Float = 0.5) async {
     stop()
     isSpeaking = true
-    lastError = nil
     defer { isSpeaking = false }
 
-    if let key = settings.elevenLabsKey {
-      let client = ElevenLabsClient(apiKey: key, voiceID: settings.elevenLabsVoiceID)
-      do {
-        let data = try await client.audio(for: text)
-        let audio = try AVAudioPlayer(data: data)
+    let text: String
+    switch prepared {
+    case .audio(let data, let words):
+      if let audio = try? AVAudioPlayer(data: data) {
         audio.delegate = self
+        audio.volume = 1.0
         player = audio
         await withCheckedContinuation { continuation in
           finished = continuation
@@ -155,10 +179,11 @@ final class HumanVoice: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDele
         }
         player = nil
         return
-      } catch {
-        // Fall through to the phone's own voice, but say why.
-        lastError = "ElevenLabs voice didn't work (\(error.localizedDescription)). Used the iPhone voice."
       }
+      lastError = "Couldn't play the downloaded voice. Used the iPhone voice."
+      text = words
+    case .phone(let words):
+      text = words
     }
 
     let utterance = AVSpeechUtterance(string: text)

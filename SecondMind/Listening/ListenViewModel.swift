@@ -40,7 +40,16 @@ final class ListenViewModel {
   var errorMessage = ""
 
   // Social Push switches.
+  /// Your-turn beep.
   var turnBeeps: Bool { didSet { save(turnBeeps, "listen.turnBeeps") } }
+  var holdOnBeep: Bool { didSet { save(holdOnBeep, "listen.holdOn") } }
+  var awkwardBeep: Bool { didSet { save(awkwardBeep, "listen.awkward") } }
+  /// Live guess of how their sentence ends.
+  private(set) var prediction: String?
+  /// Answer to a typed math problem.
+  private(set) var mathAnswer: String?
+  /// Reads remembered notes (Obsidian People pages) for names in the text.
+  @ObservationIgnored var memory: ((String) -> String)?
   var moodChimes: Bool { didSet { save(moodChimes, "listen.mood") } }
   var longTalkNudge: Bool { didSet { save(longTalkNudge, "listen.longTalk") } }
   var helpWhenStuck: Bool { didSet { save(helpWhenStuck, "listen.claude") } }
@@ -93,6 +102,7 @@ final class ListenViewModel {
   @ObservationIgnored private var lastWordsAt: TimeInterval = 0
   @ObservationIgnored private var lastTheirLineAt: TimeInterval = -.infinity
   @ObservationIgnored private var helpedForLineAt: TimeInterval = -.infinity
+  @ObservationIgnored private var predictedTheirWords = 0
 
   /// The last thing that went wrong, shown on the Listen screen.
   private(set) var problem: String?
@@ -103,6 +113,8 @@ final class ListenViewModel {
     let d = UserDefaults.standard
     func flag(_ key: String, _ fallback: Bool) -> Bool { d.object(forKey: key) == nil ? fallback : d.bool(forKey: key) }
     turnBeeps = flag("listen.turnBeeps", true)
+    holdOnBeep = flag("listen.holdOn", true)
+    awkwardBeep = flag("listen.awkward", true)
     moodChimes = flag("listen.mood", true)
     longTalkNudge = flag("listen.longTalk", false)
     helpWhenStuck = flag("listen.claude", true)
@@ -216,6 +228,8 @@ final class ListenViewModel {
     defer { isSaying = false }
     while !toSay.isEmpty {
       let line = toSay.removeFirst()
+      // Get the voice ready first (download it) while the mic keeps listening.
+      let ready = await voice.prepare(line)
       feed.muted = true
       let paused = isOn && clearVoice
       if paused { pauseMicForVoice() }
@@ -224,7 +238,12 @@ final class ListenViewModel {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
         try? AVAudioSession.sharedInstance().setActive(true)
       }
-      await voice.speak(line, rate: speechRate)
+      if paused || !isOn {
+        // Give Bluetooth a moment to switch the glasses to full-quality audio,
+        // so the first words aren't lost.
+        try? await Task.sleep(for: .milliseconds(450))
+      }
+      await voice.play(ready, rate: speechRate)
       if let voiceProblem = voice.lastError { report(voiceProblem) }
       if paused { resumeMic() }
       feed.muted = false
@@ -340,9 +359,11 @@ final class ListenViewModel {
       lastWordsAt = now
       if utteranceStartedAt == nil { utteranceStartedAt = now }
       predictReply()
+      predictTheirWords()
     }
     guard done else { return }
     predictedWords = 0
+    predictedTheirWords = 0
     let line = partial
     partial = ""
     task = nil
@@ -445,12 +466,12 @@ final class ListenViewModel {
     }
 
     // Help when I freeze, even if the loudness guess missed the turn.
-    if helpWhenStuck, !ai.debate, ai.hasKey, lastTheirLineAt > helpedForLineAt,
+    if helpWhenStuck, ai.bestReplyMode != .always, ai.hasKey, lastTheirLineAt > helpedForLineAt,
       now - lastTheirLineAt >= 3.5, now - lastActivity >= 3.5, now - lastHelpAt >= 15
     {
       helpedForLineAt = lastTheirLineAt
       lastHelpAt = now
-      if turnBeeps { play(.awkwardPause) }
+      if awkwardBeep { play(.awkwardPause) }
       run("stuck") {
         try await self.ask(Prompts.stuck + "\n\n" + Prompts.styleGuide(self.ai.replyStyle), recent: 14)
       }
@@ -466,7 +487,7 @@ final class ListenViewModel {
       lastYourTurnAt = now
       if turnBeeps { play(.yourTurn) }
     case .holdOn:
-      if turnBeeps { play(.holdOn) }
+      if holdOnBeep { play(.holdOn) }
     case .talkingLong:
       if longTalkNudge { play(.talkingLong) }
     case .theyFinished(let average, let duration):
@@ -476,8 +497,8 @@ final class ListenViewModel {
         play(.mood(change))
       }
     case .stalled:
-      if turnBeeps { play(.awkwardPause) }
-      if helpWhenStuck, !ai.debate, ai.hasKey, now - lastHelpAt >= 15 {
+      if awkwardBeep { play(.awkwardPause) }
+      if helpWhenStuck, ai.bestReplyMode != .always, ai.hasKey, now - lastHelpAt >= 15 {
         lastHelpAt = now
         helpedForLineAt = lastTheirLineAt
         run("stuck") {
@@ -505,21 +526,28 @@ final class ListenViewModel {
     let lines = conversation?.lines.count ?? 0
 
     if ai.translate, who == .them {
+      let lineID = conversation?.lines.last?.id
       run("translate") {
         let english = try await self.ai.client.ask(
           system: self.system(Prompts.translate(from: self.languageName)),
           user: "Newest line: \(line)",
           maxTokens: 1_000
         )
+        guard english != Prompts.quiet else { return }
+        // Keep the English in the transcript so every other feature runs on it.
+        if let id = lineID, let index = self.conversation?.lines.firstIndex(where: { $0.id == id }) {
+          self.conversation?.lines[index].text = "\(english) [said: \(line)]"
+        }
         self.say(english)
       }
     }
 
-    if ai.factCheck, Self.hasClaim(line), now - lastFactCheckAt >= 20 {
+    let factGap: TimeInterval = ai.factCheckMode == .always ? 10 : 20
+    if ai.factCheck, Self.hasClaim(line), now - lastFactCheckAt >= factGap {
       lastFactCheckAt = now
       run("fact") {
         let fix = try await self.ai.client.ask(
-          system: self.system(Prompts.factCheck),
+          system: self.system(Prompts.factCheck(self.ai.factCheckMode)),
           user: "Conversation so far:\n\(self.conversation?.recent(8) ?? line)",
           maxTokens: 4_000,
           webSearch: true
@@ -530,7 +558,10 @@ final class ListenViewModel {
       }
     }
 
-    if ai.consistency, lines >= 6, lines - linesAtLastConsistency >= 4, now - lastConsistencyAt >= 45 {
+    let always = ai.consistencyMode == .always
+    if ai.consistency, lines >= (always ? 3 : 6), lines - linesAtLastConsistency >= (always ? 2 : 4),
+      now - lastConsistencyAt >= (always ? 20 : 45)
+    {
       lastConsistencyAt = now
       linesAtLastConsistency = lines
       run("consistency") {
@@ -576,7 +607,7 @@ final class ListenViewModel {
     run("debate") {
       let still = heard.isEmpty ? "" : "\nThem (still talking): \(heard)"
       let hint = try await self.ai.client.ask(
-        system: self.system(Prompts.bestReply(self.ai.replyStyle)),
+        system: self.system(Prompts.bestReply(self.ai.replyStyle, mode: self.ai.bestReplyMode)),
         user: "Conversation so far:\n\(self.conversation?.recent(12) ?? "")\(still)"
       )
       if self.hintWanted {
@@ -587,6 +618,91 @@ final class ListenViewModel {
         self.pendingHint = (hint, Date().timeIntervalSince(self.startedAt))
       }
     }
+  }
+
+  /// Predict their words: guesses how their sentence ends while they talk.
+  private func predictTheirWords() {
+    guard ai.predictWords, ai.hasKey, meFrames <= max(themFrames, 2) else { return }
+    let words = partial.split(separator: " ").count
+    guard words >= 3, words - predictedTheirWords >= 3 else { return }
+    predictedTheirWords = words
+    let heard = partial
+    run("predict") {
+      let guess = try await self.ai.client.ask(
+        system: self.system(Prompts.predictWords),
+        user: "Conversation so far:\n\(self.conversation?.recent(8) ?? "")\nThem (mid-sentence): \(heard)",
+        maxTokens: 1_000
+      )
+      self.prediction = guess
+      if self.ai.predictSpoken { self.say(guess) }
+    }
+  }
+
+  // MARK: - Typed math and presets
+
+  /// Math typed on the phone instead of heard.
+  func solveTyped(_ problem: String) {
+    let text = problem.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return }
+    // Plain arithmetic needs no Claude at all.
+    if let value = MathEngine.evaluate(text) {
+      mathAnswer = MathEngine.spoken(value)
+      if isOn { say("It's \(mathAnswer!).") }
+      return
+    }
+    guard ai.hasKey else {
+      report("Word problems need your Claude key in Settings.")
+      return
+    }
+    run("math") { try await self.solve(text, typed: true) }
+  }
+
+  /// One tap to set the switches for a situation.
+  func apply(_ preset: Preset) {
+    switch preset {
+    case .social:
+      ai.bestReplyMode = .smart
+      ai.replyStyle = .adaptive
+      helpWhenStuck = true
+      turnBeeps = true; holdOnBeep = true; awkwardBeep = true
+      moodChimes = true; longTalkNudge = false
+      ai.factCheckMode = .off; ai.consistencyMode = .off; ai.predictWords = false
+    case .interview:
+      ai.bestReplyMode = .always
+      ai.replyStyle = .presentation
+      helpWhenStuck = true
+      turnBeeps = true; holdOnBeep = true; awkwardBeep = true
+      moodChimes = false; longTalkNudge = true
+      ai.factCheckMode = .off; ai.consistencyMode = .off; ai.predictWords = true
+    case .date:
+      ai.bestReplyMode = .smart
+      ai.replyStyle = .flirty
+      helpWhenStuck = true
+      turnBeeps = true; holdOnBeep = true; awkwardBeep = true
+      moodChimes = true; longTalkNudge = true
+      ai.factCheckMode = .off; ai.consistencyMode = .off; ai.predictWords = false
+    case .argument:
+      ai.bestReplyMode = .always
+      ai.replyStyle = .adaptive
+      helpWhenStuck = true
+      turnBeeps = true; holdOnBeep = true; awkwardBeep = false
+      moodChimes = true; longTalkNudge = false
+      ai.factCheckMode = .smart; ai.consistencyMode = .smart; ai.predictWords = true
+    case .beepsOnly:
+      ai.bestReplyMode = .off
+      helpWhenStuck = false
+      turnBeeps = true; holdOnBeep = true; awkwardBeep = true
+      moodChimes = true; longTalkNudge = false
+      ai.factCheckMode = .off; ai.consistencyMode = .off; ai.predictWords = false
+    case .allOff:
+      ai.bestReplyMode = .off
+      helpWhenStuck = false
+      turnBeeps = false; holdOnBeep = false; awkwardBeep = false
+      moodChimes = false; longTalkNudge = false
+      ai.factCheckMode = .off; ai.consistencyMode = .off; ai.predictWords = false
+      ai.translate = false; ai.math = false; ai.planDetection = false
+    }
+    status = "\(preset.rawValue) setup on."
   }
 
   private func checkPlan(_ line: String) async throws {
@@ -618,7 +734,7 @@ final class ListenViewModel {
     }
   }
 
-  private func solve(_ line: String) async throws {
+  private func solve(_ line: String, typed: Bool = false) async throws {
     let schema: [String: Any] = [
       "type": "object",
       "properties": ["expression": ["type": "string"]],
@@ -634,17 +750,21 @@ final class ListenViewModel {
       let json = try JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: String],
       let expression = json["expression"], !expression.isEmpty,
       let value = MathEngine.evaluate(expression)
-    else { return }
+    else {
+      if typed { mathAnswer = "Couldn't turn that into math. Try rewording it." }
+      return
+    }
     let answer = MathEngine.spoken(value)
+    var spoken = "It's \(answer)."
     if ai.mathStyle == .explain {
       let steps = try await ai.client.ask(
         system: system(Prompts.mathExplain(answer: answer)),
         user: "Question: \(line)\nExpression: \(expression)"
       )
-      say("It's \(answer). \(steps)")
-    } else {
-      say("It's \(answer).")
+      spoken += " \(steps)"
     }
+    if typed { mathAnswer = spoken }
+    if !typed || isOn { say(spoken) }
   }
 
   /// Asks Claude something about the recent conversation and says the answer.
@@ -672,7 +792,13 @@ final class ListenViewModel {
   }
 
   private func system(_ instruction: String) -> String {
-    Prompts.base(aboutMe: ai.aboutMe, goal: ai.goal) + "\n\n" + instruction
+    var text = Prompts.base(aboutMe: ai.aboutMe, goal: ai.goal) + "\n\n" + instruction
+    // Past talks: People notes for anyone named in this conversation.
+    if ai.useMemory, let memory, let transcript = conversation?.transcript {
+      let notes = memory(transcript)
+      if !notes.isEmpty { text += Prompts.memory(notes) }
+    }
+    return text
   }
 
   private var languageName: String {

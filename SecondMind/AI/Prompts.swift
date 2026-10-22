@@ -49,15 +49,32 @@ enum Prompts {
     """
 
   /// Best Reply: the hint for what to say next, in the chosen style.
-  static func bestReply(_ style: ReplyStyle) -> String {
-    """
-    The other person is still talking, so their last line may be cut off. Predict where they're \
-    going and give the user the best reply, ready the second they stop: under 15 words, in the \
-    user's own natural voice. It can be the point to make, a question to ask back, or a line \
-    that keeps the conversation flowing. A hint, not a script. Always give one; never stay \
-    silent or say there's nothing to add.
+  static func bestReply(_ style: ReplyStyle, mode: FeatureMode = .always) -> String {
+    let eagerness = mode == .smart
+      ? "Use judgment: if the user is clearly doing fine and the moment needs nothing from you, reply exactly \(quiet). Otherwise give the hint."
+      : "Always give one; never stay silent or say there's nothing to add."
+    return """
+      The other person may still be talking, so their last line may be cut off. Predict where \
+      they're going and give the user the best reply, ready the second they stop: under 15 \
+      words, in the user's own natural voice. It can be the point to make, a question to ask \
+      back, or a line that keeps the conversation flowing. A hint, not a script. \(eagerness)
 
-    \(styleGuide(style))
+      \(styleGuide(style))
+      """
+  }
+
+  /// Guess how their sentence ends, while they're still saying it.
+  static let predictWords = """
+    The other person is mid-sentence. Guess how they will finish it, using the conversation \
+    so far. Reply with only the full sentence you expect, under 25 words, no intro.
+    """
+
+  /// What Second-Mind remembers about people from past talks.
+  static func memory(_ notes: String) -> String {
+    """
+
+    What you remember from past talks (the user's own notes; use it, don't recite it):
+    \(notes)
     """
   }
 
@@ -100,17 +117,23 @@ enum Prompts {
     }
   }
 
-  static let factCheck = """
-    Check the factual claims in the newest lines (numbers, dates, news, records, facts), from \
-    anyone including the user. Use web search if needed. If everything is right or there are no \
-    checkable claims, reply exactly \(quiet). If something is wrong, reply with a short \
-    correction under 20 words, like "Actually, it was 1997, not 2001."
-    """
+  static func factCheck(_ mode: FeatureMode) -> String {
+    let rightClaims = mode == .always
+      ? "If a checkable claim is right, say so in under 8 words, like \"That's right, 1997.\""
+      : "If everything is right, reply exactly \(quiet)."
+    return """
+      Check the factual claims in the newest lines (numbers, dates, news, records, facts), from \
+      anyone including the user. Use web search if needed. If there are no checkable claims, \
+      reply exactly \(quiet). \(rightClaims) If something is wrong, reply with a short \
+      correction under 20 words, like "Actually, it was 1997, not 2001."
+      """
+  }
 
   static let consistency = """
-    Look for mismatches: something said now that doesn't fit something said earlier. Most are \
-    innocent, so never say anyone is lying. If there's no clear mismatch, reply exactly \
-    \(quiet). Otherwise reply under 20 words, like "Earlier they said Friday, now Saturday."
+    Look for mismatches: something said now that doesn't fit something said earlier, in this \
+    talk or in past talks you remember. Most are innocent, so never say anyone is lying. If \
+    there's no clear mismatch, reply exactly \(quiet). Otherwise reply under 20 words, like \
+    "Earlier they said Friday, now Saturday."
     """
 
   static func translate(from language: String) -> String {

@@ -19,6 +19,7 @@ final class AppState {
   let practice = PracticeGlasses()
   let listen: ListenViewModel
   let graph: GraphModel
+  let coach: CoachViewModel
 
   private init() {
     let wearables = Wearables.shared
@@ -26,6 +27,9 @@ final class AppState {
     reading = ReadingViewModel(wearables: wearables, speaker: SystemSpeaker())
     listen = ListenViewModel(ai: ai)
     graph = GraphModel(ai: ai)
+    coach = CoachViewModel(wearables: wearables, ai: ai)
+    let graph = self.graph
+    listen.memory = { text in graph.peopleNotes(for: text) }
   }
 }
 

@@ -19,6 +19,36 @@ enum ReplyStyle: String, CaseIterable, Identifiable {
   var id: String { rawValue }
 }
 
+/// How eager a feature is: off, when it judges it's worth it, or every time.
+enum FeatureMode: String, CaseIterable, Identifiable {
+  case off = "Off"
+  case smart = "Smart"
+  case always = "Always"
+  var id: String { rawValue }
+}
+
+/// One-tap setups for common situations.
+enum Preset: String, CaseIterable, Identifiable {
+  case social = "Social"
+  case interview = "Interview"
+  case date = "Date"
+  case argument = "Argument"
+  case beepsOnly = "Beeps only"
+  case allOff = "All off"
+  var id: String { rawValue }
+
+  var icon: String {
+    switch self {
+    case .social: return "person.2.fill"
+    case .interview: return "briefcase.fill"
+    case .date: return "heart.fill"
+    case .argument: return "bolt.fill"
+    case .beepsOnly: return "bell.fill"
+    case .allOff: return "moon.fill"
+    }
+  }
+}
+
 enum MathStyle: String, CaseIterable, Identifiable {
   case answer = "Just the answer"
   case explain = "Walk me through it"
@@ -45,10 +75,20 @@ final class AISettings {
 
   // Stage 2 switches
   /// Best Reply (called Debate in the vault notes).
-  var debate: Bool { didSet { put(debate, "s2.debate") } }
+  var bestReplyMode: FeatureMode { didSet { put(bestReplyMode.rawValue, "s2.bestReplyMode") } }
   var replyStyle: ReplyStyle { didSet { put(replyStyle.rawValue, "s2.replyStyle") } }
-  var factCheck: Bool { didSet { put(factCheck, "s2.factCheck") } }
-  var consistency: Bool { didSet { put(consistency, "s2.consistency") } }
+  var factCheckMode: FeatureMode { didSet { put(factCheckMode.rawValue, "s2.factCheckMode") } }
+  var consistencyMode: FeatureMode { didSet { put(consistencyMode.rawValue, "s2.consistencyMode") } }
+  /// Guess how their sentence ends while they're still talking.
+  var predictWords: Bool { didSet { put(predictWords, "s2.predict") } }
+  /// Also whisper the guess (otherwise it's only shown on screen).
+  var predictSpoken: Bool { didSet { put(predictSpoken, "s2.predictSpoken") } }
+  /// Use my Obsidian People notes so it remembers past talks.
+  var useMemory: Bool { didSet { put(useMemory, "s2.memory") } }
+
+  var debate: Bool { bestReplyMode != .off }
+  var factCheck: Bool { factCheckMode != .off }
+  var consistency: Bool { consistencyMode != .off }
   var translate: Bool { didSet { put(translate, "s2.translate") } }
   /// Language to listen for in Translate, like "es-US".
   var translateFrom: String { didSet { put(translateFrom, "s2.translateFrom") } }
@@ -67,10 +107,17 @@ final class AISettings {
     goal = d.string(forKey: "ai.goal") ?? ""
     elevenLabsVoiceID = d.string(forKey: "voice.elevenID") ?? ElevenLabsClient.defaultVoiceID
     appleVoiceID = d.string(forKey: "voice.appleID")
-    debate = flag("s2.debate", false)
+    func mode(_ key: String, oldFlag: String) -> FeatureMode {
+      if let raw = d.string(forKey: key), let value = FeatureMode(rawValue: raw) { return value }
+      return d.bool(forKey: oldFlag) ? .always : .off
+    }
+    bestReplyMode = mode("s2.bestReplyMode", oldFlag: "s2.debate")
     replyStyle = ReplyStyle(rawValue: d.string(forKey: "s2.replyStyle") ?? "") ?? .adaptive
-    factCheck = flag("s2.factCheck", false)
-    consistency = flag("s2.consistency", false)
+    factCheckMode = mode("s2.factCheckMode", oldFlag: "s2.factCheck")
+    consistencyMode = mode("s2.consistencyMode", oldFlag: "s2.consistency")
+    predictWords = flag("s2.predict", false)
+    predictSpoken = flag("s2.predictSpoken", false)
+    useMemory = flag("s2.memory", true)
     translate = flag("s2.translate", false)
     translateFrom = d.string(forKey: "s2.translateFrom") ?? "es-US"
     planDetection = flag("s2.plans", true)
