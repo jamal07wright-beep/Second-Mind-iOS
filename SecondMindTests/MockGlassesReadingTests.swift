@@ -78,7 +78,8 @@ final class MockGlassesReadingTests: XCTestCase {
   /// 900 x 600), never in the tall live video frame. That proves the photo,
   /// not the video, reached the reading step, without slow simulator OCR.
   private func makeViewModel(speaker: FakeSpeaker) -> ReadingViewModel {
-    ReadingViewModel(wearables: Wearables.shared, speaker: speaker) { image in
+    // The mock's photo can take 10+ seconds on a busy CI Mac.
+    ReadingViewModel(wearables: Wearables.shared, speaker: speaker, photoTimeout: .seconds(40)) { image in
       image.size.width > image.size.height ? "BUS STOP\nROUTE 22 DOWNTOWN" : ""
     }
   }
