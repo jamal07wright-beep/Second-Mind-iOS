@@ -30,6 +30,18 @@ final class AppState {
     coach = CoachViewModel(wearables: wearables, ai: ai)
     let graph = self.graph
     listen.memory = { text in graph.peopleNotes(for: text) }
+    listen.saveVoiceNote = { profile in graph.saveVoiceNote(profile) }
+    // If the phone lost the voice profile, get it back from Obsidian.
+    if listen.voiceProfile == nil, let restored = graph.loadVoiceNote() {
+      restored.save()
+      listen.useProfile(restored)
+    }
+  }
+
+  /// Called when voice setup finishes.
+  func voiceSetupFinished(_ profile: VoiceProfile) {
+    listen.useProfile(profile)
+    graph.saveVoiceNote(profile)
   }
 }
 

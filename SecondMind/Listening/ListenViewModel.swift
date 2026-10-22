@@ -50,6 +50,20 @@ final class ListenViewModel {
   private(set) var mathAnswer: String?
   /// Reads remembered notes (Obsidian People pages) for names in the text.
   @ObservationIgnored var memory: ((String) -> String)?
+  /// Writes the "My Voice" note into the Obsidian vault.
+  @ObservationIgnored var saveVoiceNote: ((VoiceProfile) -> Void)?
+  /// Your voice: pitch, loudness, pace, and words. Made once, kept forever.
+  private(set) var voiceProfile: VoiceProfile?
+  /// Opens the voice setup screen.
+  var showVoiceSetup = false
+  /// Turns up quiet and mumbled voices before speech recognition hears them.
+  var boostQuiet: Bool {
+    didSet {
+      save(boostQuiet, "listen.boost")
+      feed.boost = boostQuiet
+    }
+  }
+  @ObservationIgnored private var linesLearned = 0
   var moodChimes: Bool { didSet { save(moodChimes, "listen.mood") } }
   var longTalkNudge: Bool { didSet { save(longTalkNudge, "listen.longTalk") } }
   var helpWhenStuck: Bool { didSet { save(helpWhenStuck, "listen.claude") } }
@@ -112,6 +126,7 @@ final class ListenViewModel {
     self.voice = HumanVoice(settings: ai)
     let d = UserDefaults.standard
     func flag(_ key: String, _ fallback: Bool) -> Bool { d.object(forKey: key) == nil ? fallback : d.bool(forKey: key) }
+    boostQuiet = flag("listen.boost", true)
     turnBeeps = flag("listen.turnBeeps", true)
     holdOnBeep = flag("listen.holdOn", true)
     awkwardBeep = flag("listen.awkward", true)
@@ -123,9 +138,27 @@ final class ListenViewModel {
       detector.myLevel = d.float(forKey: "listen.myLevel")
     }
     navigator.say = { [weak self] text in self?.say(text) }
+    feed.boost = boostQuiet
+    if let saved = VoiceProfile.load() { useProfile(saved) }
   }
 
-  var isCalibrated: Bool { UserDefaults.standard.object(forKey: "listen.myLevel") != nil }
+  var isCalibrated: Bool {
+    voiceProfile != nil || UserDefaults.standard.object(forKey: "listen.myLevel") != nil
+  }
+
+  /// Uses a voice profile from now on (from setup, or restored from Obsidian).
+  func useProfile(_ profile: VoiceProfile) {
+    voiceProfile = profile
+    detector.profile = profile
+    detector.myLevel = profile.normalLevel
+  }
+
+  /// Saves the profile everywhere, including Obsidian.
+  private func storeProfile() {
+    guard let voiceProfile else { return }
+    voiceProfile.save()
+    saveVoiceNote?(voiceProfile)
+  }
 
   // MARK: - On / off
 
@@ -152,6 +185,7 @@ final class ListenViewModel {
     conversation = Conversation(started: startedAt)
     var fresh = TurnDetector()
     fresh.myLevel = detector.myLevel
+    fresh.profile = voiceProfile
     detector = fresh
     mood = MoodDetector()
     pendingHint = nil
@@ -180,6 +214,7 @@ final class ListenViewModel {
     conversation = nil
     partial = ""
     talker = .nobody
+    storeProfile()
     status = "Off. Saved for tonight's notes."
   }
 
@@ -310,10 +345,15 @@ final class ListenViewModel {
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
     let feed = self.feed
+    let rate = format.sampleRate
     input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self] buffer, _ in
       let level = AudioFeed.level(of: buffer)
+      var pitch: Float?
+      if level > -60, let data = buffer.floatChannelData, buffer.frameLength > 0 {
+        pitch = PitchDetector.pitch(UnsafeBufferPointer(start: data[0], count: Int(buffer.frameLength)), sampleRate: rate)
+      }
       feed.append(buffer)
-      Task { @MainActor [weak self] in self?.heard(level: level) }
+      Task { @MainActor [weak self] in self?.heard(level: level, pitch: pitch) }
     }
     engine.prepare()
     try engine.start()
@@ -395,6 +435,11 @@ final class ListenViewModel {
     if who == .them {
       lastTheirLineAt = Date().timeIntervalSince(startedAt)
       deliverBestReply()
+    } else if voiceProfile != nil {
+      // Keep learning how you talk.
+      voiceProfile?.learn(clean)
+      linesLearned += 1
+      if linesLearned % 10 == 0 { voiceProfile?.save() }
     }
     react(to: clean, from: who)
   }
@@ -426,7 +471,7 @@ final class ListenViewModel {
 
   // MARK: - Every level reading
 
-  private func heard(level: Float) {
+  private func heard(level: Float, pitch: Float? = nil) {
     guard isOn, !micPaused else { return }
     let now = Date().timeIntervalSince(startedAt)
 
@@ -441,7 +486,7 @@ final class ListenViewModel {
       calibrationLevels.append(level)
     }
 
-    let events = detector.feed(level: level, at: now)
+    let events = detector.feed(level: level, pitch: pitch, at: now)
     talker = detector.current
 
     switch detector.current {
@@ -793,6 +838,7 @@ final class ListenViewModel {
 
   private func system(_ instruction: String) -> String {
     var text = Prompts.base(aboutMe: ai.aboutMe, goal: ai.goal) + "\n\n" + instruction
+    if let voiceProfile { text += "\n\n" + voiceProfile.styleNote }
     // Past talks: People notes for anyone named in this conversation.
     if ai.useMemory, let memory, let transcript = conversation?.transcript {
       let notes = memory(transcript)
@@ -886,11 +932,54 @@ final class AudioFeed: @unchecked Sendable {
     lock.unlock()
   }
 
+  private var _boost = true
+
+  /// Turn up quiet speech before speech recognition hears it.
+  var boost: Bool {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return _boost
+    }
+    set {
+      lock.lock()
+      _boost = newValue
+      lock.unlock()
+    }
+  }
+
   func append(_ buffer: AVAudioPCMBuffer) {
     lock.lock()
     let request = _muted ? nil : _request
+    let boost = _boost
     lock.unlock()
-    request?.append(buffer)
+    guard let request else { return }
+    request.append(boost ? Self.boosted(buffer) : buffer)
+  }
+
+  /// How much to turn up a buffer: quiet speech gets lifted toward a normal
+  /// level (up to 6 times louder); silence and loud speech are left alone.
+  static func gain(forLevel level: Float) -> Float {
+    guard level > -62, level < -26 else { return 1 }
+    let wanted: Float = -24
+    return min(pow(10, (wanted - level) / 20), 6)
+  }
+
+  static func boosted(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer {
+    let gain = gain(forLevel: level(of: buffer))
+    guard gain > 1.05,
+      let source = buffer.floatChannelData,
+      let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength),
+      let target = copy.floatChannelData
+    else { return buffer }
+    copy.frameLength = buffer.frameLength
+    let frames = Int(buffer.frameLength)
+    for channel in 0..<Int(buffer.format.channelCount) {
+      for i in 0..<frames {
+        target[channel][i] = max(-1, min(1, source[channel][i] * gain))
+      }
+    }
+    return copy
   }
 
   /// Loudness of a buffer in dB (0 is the loudest possible).

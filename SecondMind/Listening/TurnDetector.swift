@@ -55,18 +55,25 @@ struct TurnDetector {
   private var yourTurnAt: TimeInterval?
   private var stallSent = false
 
-  /// Who a level sounds like, given the noise floor and your voice level.
-  func classify(_ level: Float) -> Talker {
-    let speechLine = max(noiseFloor + 10, -55)
+  /// Your saved voice. With it, pitch tells you and others apart, not just loudness.
+  var profile: VoiceProfile?
+
+  /// Who this sounds like. The bar for "someone is talking" is low, so quiet
+  /// and mumbled voices still count.
+  func classify(_ level: Float, pitch: Float? = nil) -> Talker {
+    let speechLine = max(noiseFloor + 6, -60)
     guard level > speechLine else { return .nobody }
+    if let profile {
+      return profile.soundsLikeMe(level: level, pitch: pitch) ? .me : .them
+    }
     return level >= myLevel - 6 ? .me : .them
   }
 
   /// Feed one level reading (about 10 a second). Returns anything worth acting on.
-  mutating func feed(level: Float, at time: TimeInterval) -> [TurnEvent] {
+  mutating func feed(level: Float, pitch: Float? = nil, at time: TimeInterval) -> [TurnEvent] {
     trackNoiseFloor(level)
     var events: [TurnEvent] = []
-    let who = classify(level)
+    let who = classify(level, pitch: pitch)
     current = who
 
     if who == .nobody {

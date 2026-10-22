@@ -63,6 +63,31 @@ final class GraphModel {
 
   @ObservationIgnored private var peopleCache: (names: [String], at: Date)?
 
+  private static let voicePath = "\(DayGraph.root)/My Voice.md"
+
+  /// Writes the "My Voice" note into the vault (or the app folder if no vault yet).
+  func saveVoiceNote(_ profile: VoiceProfile) {
+    let vault = resolveVault()
+    let base = vault ?? fallbackFolder
+    let access = vault?.startAccessingSecurityScopedResource() ?? false
+    defer { if access { vault?.stopAccessingSecurityScopedResource() } }
+    let url = base.appendingPathComponent(Self.voicePath)
+    try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? profile.obsidianNote().write(to: url, atomically: true, encoding: .utf8)
+  }
+
+  /// Reads the voice profile back from the vault, if it's there.
+  func loadVoiceNote() -> VoiceProfile? {
+    let vault = resolveVault()
+    let base = vault ?? fallbackFolder
+    let access = vault?.startAccessingSecurityScopedResource() ?? false
+    defer { if access { vault?.stopAccessingSecurityScopedResource() } }
+    guard let note = try? String(contentsOf: base.appendingPathComponent(Self.voicePath), encoding: .utf8) else {
+      return nil
+    }
+    return VoiceProfile.from(note: note)
+  }
+
   /// What the vault remembers about anyone named in `text`: the newest part
   /// of their People page. Feeds Best Reply and Consistency Check.
   func peopleNotes(for text: String, limit: Int = 1_500) -> String {

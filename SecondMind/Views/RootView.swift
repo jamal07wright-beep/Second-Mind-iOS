@@ -31,6 +31,16 @@ struct RootView: View {
         .tabItem { Label("Settings", systemImage: "gearshape") }
     }
     .tint(.indigo)
+    .sheet(isPresented: Bindable(state.listen).showVoiceSetup) {
+      VoiceSetupView(model: VoiceSetupModel { profile in state.voiceSetupFinished(profile) })
+    }
+    .onAppear {
+      // First launch: learn the user's voice once.
+      if state.listen.voiceProfile == nil, !UserDefaults.standard.bool(forKey: "voice.setupOffered") {
+        UserDefaults.standard.set(true, forKey: "voice.setupOffered")
+        state.listen.showVoiceSetup = true
+      }
+    }
     .onChange(of: state.reading.isOn) { _, on in
       if on {
         state.listen.stop()

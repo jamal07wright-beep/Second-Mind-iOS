@@ -48,6 +48,20 @@ struct ListenView: View {
         }
 
         Section {
+          Toggle("Boost quiet voices", isOn: $listen.boostQuiet)
+          Button(listen.voiceProfile == nil ? "Learn my voice" : "Redo my voice") {
+            listen.stop()
+            listen.showVoiceSetup = true
+          }
+        } header: {
+          Label("Hearing", systemImage: "waveform")
+        } footer: {
+          Text(listen.voiceProfile == nil
+            ? "Learn my voice once so it can tell you apart from everyone else, even quiet talkers."
+            : "Knows your voice. Boost quiet voices helps catch people who talk low or mumble.")
+        }
+
+        Section {
           Toggle("Your turn", isOn: $listen.turnBeeps)
           Toggle("Hold on (they were just pausing)", isOn: $listen.holdOnBeep)
           Toggle("Awkward pause", isOn: $listen.awkwardBeep)
@@ -152,8 +166,11 @@ struct ListenView: View {
           Circle().fill(dotColor).frame(width: 10, height: 10)
           Text(talkerText).foregroundStyle(.secondary)
           Spacer()
-          Button(listen.isCalibrated ? "Relearn my voice" : "Learn my voice") { listen.calibrate() }
-            .font(.footnote)
+          Button(listen.voiceProfile == nil ? "Learn my voice" : "Redo my voice") {
+            listen.stop()
+            listen.showVoiceSetup = true
+          }
+          .font(.footnote)
         }
         if !listen.partial.isEmpty {
           Text(listen.partial).font(.callout).foregroundStyle(.secondary).lineLimit(3)
