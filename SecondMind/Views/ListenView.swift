@@ -34,6 +34,11 @@ struct ListenView: View {
             Picker("Reply style", selection: $ai.replyStyle) {
               ForEach(ReplyStyle.allCases) { Text($0.rawValue).tag($0) }
             }
+            if ai.replyStyle == .adaptive {
+              Toggle(isOn: $ai.prMode) {
+                SwitchLabel(title: "PR", detail: "On camera or watched: every hint stays clip-safe")
+              }
+            }
             Toggle(isOn: $ai.readRoom) {
               SwitchLabel(title: "Read the room", detail: "Works out what you're going for, what they want, and what's next")
             }
@@ -255,7 +260,7 @@ struct ListenView: View {
 
   static func styleHint(_ style: ReplyStyle) -> String {
     switch style {
-    case .adaptive: return "Reads the room and matches it."
+    case .adaptive: return "For on the go: reads the room and matches it."
     case .balanced: return "Neutral, friendly, clear."
     case .flirty: return "Playful and warm. Backs off if they're not feeling it."
     case .presentation: return "Professional and persuasive."

@@ -119,6 +119,8 @@ final class AISettings {
   var influence: Bool { didSet { put(influence, "s2.influence") } }
   /// Speak likely outcomes at real turning points.
   var outcomes: Bool { didSet { put(outcomes, "s2.outcomes") } }
+  /// On the record: cameras, recordings, or people watching. Hints stay clip-safe.
+  var prMode: Bool { didSet { put(prMode, "s2.pr") } }
 
   var debate: Bool { bestReplyMode != .off }
   var factCheck: Bool { factCheckMode != .off }
@@ -155,6 +157,7 @@ final class AISettings {
     readRoom = flag("s2.readRoom", true)
     influence = flag("s2.influence", false)
     outcomes = flag("s2.outcomes", false)
+    prMode = flag("s2.pr", false)
     translate = flag("s2.translate", false)
     translateFrom = d.string(forKey: "s2.translateFrom") ?? "es-US"
     planDetection = flag("s2.plans", true)

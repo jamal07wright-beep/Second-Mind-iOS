@@ -938,6 +938,7 @@ final class ListenViewModel {
 
   private func system(_ instruction: String) -> String {
     var text = Prompts.base(aboutMe: ai.aboutMe, goal: ai.goal) + "\n\n" + instruction
+    if ai.prMode { text += "\n\n" + Prompts.pr }
     if let voiceProfile { text += "\n\n" + voiceProfile.styleNote }
     if ai.readRoom || ai.influence, let situation { text += "\n\n" + situation.brief }
     text += memoryNote

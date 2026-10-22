@@ -37,6 +37,11 @@ final class Update4Tests: XCTestCase {
     XCTAssertTrue(read.summary.contains("keep costs down"))
   }
 
+  func testPRKeepsHintsClipSafe() {
+    XCTAssertTrue(Prompts.pr.contains("out of context"))
+    XCTAssertTrue(Prompts.pr.contains("de-escalating"))
+  }
+
   func testInfluenceStaysHonest() {
     XCTAssertTrue(Prompts.influence.contains("Never lies"))
     XCTAssertTrue(Prompts.situation(influence: true, outcomes: true).contains("Never lies"))

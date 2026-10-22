@@ -86,6 +86,16 @@ enum Prompts {
     """
   }
 
+  /// PR switch: the user may be recorded or watched.
+  static let pr = """
+    PR is on: the user may be on camera, recorded, or watched (security cameras, phones out, \
+    staff, police, a crowd). Every hint must be safe to play back out of context: calm, \
+    polite but firm, de-escalating. Nothing offensive, no slurs or cussing, nothing that \
+    sounds like a threat or an admission, no insults about anyone, no oversharing personal \
+    info. Keep their natural voice, just the camera-ready version. If someone is baiting \
+    them, hint the cool, short answer that makes the user look good on tape.
+    """
+
   /// Influence guide added to Best Reply when the Influence switch is on.
   static let influence = """
     Influence is on: shape the hint so it moves them toward what the user wants. Use honest \
@@ -115,7 +125,8 @@ enum Prompts {
     switch style {
     case .adaptive:
       return """
-        Style: adaptive. Read the room from the conversation and the goal, and match it without \
+        Style: adaptive, for on-the-go social situations where anything can come up. Read the \
+        room from the conversation and the goal, and match it without \
         being told: relaxed and funny with friends, warm and playful when there's chemistry, \
         calm and sharp in a disagreement, professional in an interview or meeting, gentle when \
         someone is hurting. Adaptive also means you decide which tools fit the moment: steer \
